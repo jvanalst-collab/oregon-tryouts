@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase, uploadPhoto } from './supabase'
 
 // ── CONSTANTS ──
-const G = '#007030', Y = '#FEE11A'
+const G = '#154733', Y = '#FEE123'
 const POSITIONS = ['GK','CB','RB','LB','RB/LB','CDM','CM','CAM','LW','RW','Wing','ST','CF']
 const YEAR_COLORS = { FR:'#60a5fa', SOPH:'#34d399', JUN:'#fbbf24', SEN:'#f87171', GRAD:'#c084fc' }
 const POS_GROUPS = {
@@ -106,7 +106,7 @@ function PlayerCheckIn({ onBack }) {
   if (submitted) return (
     <div style={{ minHeight:'100vh', background:'#020617', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
       <div style={{ width:80, height:80, borderRadius:'50%', background:G, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:20 }}><span style={{ fontSize:40, color:Y }}>✓</span></div>
-      <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif", marginBottom:8 }}>YOU'RE CHECKED IN</div>
+      <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", marginBottom:8 }}>YOU'RE CHECKED IN</div>
       <div style={{ color:'#94a3b8', fontSize:15, textAlign:'center', maxWidth:300, lineHeight:1.5 }}>{form.first} #{form.num} — you're all set. Good luck.</div>
       {photo && <img src={photo} alt="" style={{ width:120, height:120, borderRadius:16, objectFit:'cover', marginTop:24, border:'3px solid '+G }} />}
     </div>
@@ -116,7 +116,7 @@ function PlayerCheckIn({ onBack }) {
     <div style={{ minHeight:'100vh', background:'#020617' }}>
       <div style={{ background:G, padding:'24px 20px', textAlign:'center' }}>
         <div style={{ fontSize:13, color:'#ffffffaa', textTransform:'uppercase', letterSpacing:2, marginBottom:4 }}>Oregon Club Soccer</div>
-        <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif" }}>TRYOUT CHECK-IN</div>
+        <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>TRYOUT CHECK-IN</div>
         <div style={{ fontSize:13, color:'#ffffffcc', marginTop:6 }}>Fill out the form and snap a photo.</div>
       </div>
       <div style={{ padding:20, maxWidth:480, margin:'0 auto' }}>
@@ -148,7 +148,7 @@ function PlayerCheckIn({ onBack }) {
           )}
         </div>
         {error && <div style={{ background:'#7f1d1d40', color:'#fca5a5', padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:13 }}>{error}</div>}
-        <button onClick={handleSubmit} disabled={loading} style={{ width:'100%', padding:14, borderRadius:12, border:'none', background:G, color:Y, fontSize:17, fontWeight:700, fontFamily:"'Oswald',sans-serif", letterSpacing:1, cursor:loading?'wait':'pointer', opacity:loading?0.6:1 }}>{loading ? 'CHECKING IN...' : 'CHECK IN'}</button>
+        <button onClick={handleSubmit} disabled={loading} style={{ width:'100%', padding:14, borderRadius:12, border:'none', background:G, color:Y, fontSize:17, fontWeight:700, fontFamily:"'Geo',sans-serif", letterSpacing:1, cursor:loading?'wait':'pointer', opacity:loading?0.6:1 }}>{loading ? 'CHECKING IN...' : 'CHECK IN'}</button>
         {onBack && <button onClick={onBack} style={{ width:'100%', marginTop:10, padding:10, border:'none', background:'transparent', color:'#475569', fontSize:13, cursor:'pointer' }}>← Back</button>}
       </div>
     </div>
@@ -174,12 +174,12 @@ function EvalLogin({ onLogin, onBack }) {
 
   return (
     <div style={{ minHeight:'100vh', background:'#020617', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
-      <div style={{ fontSize:24, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif", marginBottom:4 }}>EVALUATOR LOGIN</div>
+      <div style={{ fontSize:24, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", marginBottom:4 }}>EVALUATOR LOGIN</div>
       <div style={{ color:'#64748b', fontSize:13, marginBottom:24, textAlign:'center' }}>Enter the access code you were given.</div>
       <input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="ACCESS CODE" onKeyDown={e=>e.key==='Enter'&&handleLogin()}
-        style={{ ...input, maxWidth:300, textAlign:'center', fontSize:20, fontWeight:700, fontFamily:"'Oswald',sans-serif", letterSpacing:2 }} />
+        style={{ ...input, maxWidth:300, textAlign:'center', fontSize:20, fontWeight:700, fontFamily:"'Geo',sans-serif", letterSpacing:2 }} />
       {error && <div style={{ color:'#fca5a5', fontSize:13, marginTop:10 }}>{error}</div>}
-      <button onClick={handleLogin} disabled={loading} style={{ marginTop:16, padding:'12px 40px', borderRadius:10, border:'none', background:G, color:Y, fontSize:16, fontWeight:700, fontFamily:"'Oswald',sans-serif", cursor:'pointer' }}>{loading?'CHECKING...':'ENTER'}</button>
+      <button onClick={handleLogin} disabled={loading} style={{ marginTop:16, padding:'12px 40px', borderRadius:10, border:'none', background:G, color:Y, fontSize:16, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>{loading?'CHECKING...':'ENTER'}</button>
       {onBack && <button onClick={onBack} style={{ marginTop:12, border:'none', background:'transparent', color:'#475569', fontSize:13, cursor:'pointer' }}>← Back</button>}
     </div>
   )
@@ -220,7 +220,7 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
 
   const PlayerPhoto = ({ size=44 }) => player.photo_url
     ? <img src={player.photo_url} alt="" style={{ width:size, height:size, borderRadius:size/4, objectFit:'cover', border:'2px solid '+G, flexShrink:0 }} />
-    : <div style={{ width:size, height:size, borderRadius:size/4, background:G, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Oswald',sans-serif", fontSize:size*0.45, fontWeight:700, color:Y, flexShrink:0 }}>{player.pinnie_num}</div>
+    : <div style={{ width:size, height:size, borderRadius:size/4, background:G, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Geo',sans-serif", fontSize:size*0.45, fontWeight:700, color:Y, flexShrink:0 }}>{player.pinnie_num}</div>
 
   return (
     <div style={{ background:'#0f172a', borderRadius:12, overflow:'hidden', border:'1px solid '+(isScored?G+'60':'#1e293b'), marginBottom:8 }}>
@@ -228,7 +228,7 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
         <PlayerPhoto />
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-            <span style={{ fontFamily:"'Oswald',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{player.pinnie_num}</span>
+            <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{player.pinnie_num}</span>
             <span style={{ color:'#f1f5f9', fontSize:14, fontWeight:600 }}>{player.first_name} {player.last_name}</span>
           </div>
           <div style={{ display:'flex', gap:5, marginTop:3, flexWrap:'wrap' }}>
@@ -477,7 +477,7 @@ function EvalView({ evaluator, onLogout }) {
   const emptyState = (icon, msg) => <div style={{ textAlign:'center', padding:'60px 20px', color:'#475569' }}><div style={{ fontSize:48, marginBottom:12 }}>{icon}</div><div style={{ fontSize:15, fontWeight:600, color:'#64748b' }}>{msg}</div></div>
   const PlayerPhoto = ({ player: p, size=40 }) => p.photo_url
     ? <img src={p.photo_url} alt="" style={{ width:size, height:size, borderRadius:size/4, objectFit:'cover', border:'2px solid '+G, flexShrink:0 }} />
-    : <div style={{ width:size, height:size, borderRadius:size/4, background:G, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Oswald',sans-serif", fontSize:size*0.45, fontWeight:700, color:Y, flexShrink:0 }}>{p.pinnie_num}</div>
+    : <div style={{ width:size, height:size, borderRadius:size/4, background:G, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'Geo',sans-serif", fontSize:size*0.45, fontWeight:700, color:Y, flexShrink:0 }}>{p.pinnie_num}</div>
 
   const RecButtons = ({ playerId, size=24 }) => {
     const rec = getMyRec(playerId)
@@ -498,7 +498,7 @@ function EvalView({ evaluator, onLogout }) {
           padding:'4px 10px', borderRadius:6, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
           background: d===currentDay?Y : d<currentDay?G+'aa':'#ffffff15',
           color: d===currentDay?G : d<currentDay?'#ffffffcc':'#ffffff44',
-          fontFamily:"'Oswald',sans-serif",
+          fontFamily:"'Geo',sans-serif",
         }}>D{d}</button>
       ))}
       <button onClick={()=>goToDay(currentDay+1)} disabled={currentDay>=4} style={{ width:24, height:24, borderRadius:4, border:'none', background:'#ffffff15', color:currentDay>=4?'#ffffff22':'#ffffffcc', fontSize:14, cursor:currentDay>=4?'default':'pointer', fontWeight:700 }}>▸</button>
@@ -512,7 +512,7 @@ function EvalView({ evaluator, onLogout }) {
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
           <button onClick={onLogout} style={{ background:'none', border:'none', color:'#ffffffaa', fontSize:18, cursor:'pointer', padding:0 }}>←</button>
           <div style={{ flex:1 }}>
-            <div style={{ fontSize:16, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif" }}>TRYOUT HQ</div>
+            <div style={{ fontSize:16, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>TRYOUT HQ</div>
             <div style={{ fontSize:11, color:'#ffffffaa' }}>{evaluator.name}</div>
           </div>
           <DayNav />
@@ -538,7 +538,7 @@ function EvalView({ evaluator, onLogout }) {
                     <PlayerPhoto player={p} size={42} />
                     <div style={{ flex:1 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-                        <span style={{ fontFamily:"'Oswald',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{p.pinnie_num}</span>
+                        <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{p.pinnie_num}</span>
                         <span style={{ color:ci?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
                       </div>
                       <div style={{ color:'#64748b', fontSize:11, marginTop:1 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</div>
@@ -615,11 +615,11 @@ function EvalView({ evaluator, onLogout }) {
               return (
                 <div key={p.id} style={{ background:isCut?'#7f1d1d08':'#0f172a', borderRadius:10, border:'1px solid '+(isCut?'#7f1d1d30':'#1e293b'), overflow:'hidden', opacity:isCut?0.5:1, marginBottom:6 }}>
                   <button onClick={()=>setExpandedDash(isExp?null:p.id)} style={{ width:'100%', border:'none', background:'transparent', padding:'10px 12px', display:'flex', alignItems:'center', gap:7, cursor:'pointer', textAlign:'left' }}>
-                    {rank && <div style={{ color:'#475569', fontFamily:"'Oswald',sans-serif", fontSize:14, fontWeight:700, width:20 }}>{rank}</div>}
+                    {rank && <div style={{ color:'#475569', fontFamily:"'Geo',sans-serif", fontSize:14, fontWeight:700, width:20 }}>{rank}</div>}
                     <PlayerPhoto player={p} size={34} />
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:4, flexWrap:'wrap' }}>
-                        <span style={{ fontFamily:"'Oswald',sans-serif", fontSize:12, fontWeight:700, color:Y, background:G, padding:'0 4px', borderRadius:3 }}>#{p.pinnie_num}</span>
+                        <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:Y, background:G, padding:'0 4px', borderRadius:3 }}>#{p.pinnie_num}</span>
                         <span style={{ color:'#f1f5f9', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
                         {isCut && <span style={{ fontSize:9, background:'#7f1d1d', color:'#fca5a5', padding:'1px 5px', borderRadius:3, fontWeight:600 }}>CUT D{p.cut_after_day}</span>}
                       </div>
@@ -628,7 +628,7 @@ function EvalView({ evaluator, onLogout }) {
                     <div style={{ display:'flex', gap:6, alignItems:'center', flexShrink:0 }}>
                       {['Game','Intng','Avg'].map((lbl,li) => {
                         const val = li===0?p.avgGame:li===1?p.avgInt:p.avgTotal
-                        return <div key={lbl} style={{ textAlign:'center' }}><div style={{ fontSize:8, color:'#475569', textTransform:'uppercase' }}>{lbl}</div><div style={{ fontSize:li===2?15:13, fontWeight:700, fontFamily:li===2?"'Oswald',sans-serif":"inherit", color:val!=null?(val>=7?Y:'#e2e8f0'):'#334155' }}>{val?.toFixed(1)??'—'}</div></div>
+                        return <div key={lbl} style={{ textAlign:'center' }}><div style={{ fontSize:8, color:'#475569', textTransform:'uppercase' }}>{lbl}</div><div style={{ fontSize:li===2?15:13, fontWeight:700, fontFamily:li===2?"'Geo',sans-serif":"inherit", color:val!=null?(val>=7?Y:'#e2e8f0'):'#334155' }}>{val?.toFixed(1)??'—'}</div></div>
                       })}
                     </div>
                     {!isCut && <RecButtons playerId={p.id} />}
@@ -682,8 +682,8 @@ function EvalView({ evaluator, onLogout }) {
 
             {/* Summary */}
             <div style={{ marginTop:16, background:'#0f172a', borderRadius:12, padding:14, display:'flex', justifyContent:'space-around', textAlign:'center' }}>
-              <div><div style={{ color:Y, fontSize:26, fontWeight:700, fontFamily:"'Oswald',sans-serif" }}>{activePlayers.length}</div><div style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase' }}>Active</div></div>
-              <div><div style={{ color:'#f87171', fontSize:26, fontWeight:700, fontFamily:"'Oswald',sans-serif" }}>{players.filter(p=>p.status==='cut').length}</div><div style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase' }}>Cut</div></div>
+              <div><div style={{ color:Y, fontSize:26, fontWeight:700, fontFamily:"'Geo',sans-serif" }}>{activePlayers.length}</div><div style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase' }}>Active</div></div>
+              <div><div style={{ color:'#f87171', fontSize:26, fontWeight:700, fontFamily:"'Geo',sans-serif" }}>{players.filter(p=>p.status==='cut').length}</div><div style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase' }}>Cut</div></div>
             </div>
           </>)}
         </div>
@@ -695,14 +695,14 @@ function EvalView({ evaluator, onLogout }) {
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
             <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Day Navigation</div>
             <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-              <div style={{ fontSize:48, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif" }}>{currentDay}</div>
+              <div style={{ fontSize:48, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>{currentDay}</div>
               <div style={{ flex:1 }}>
                 <div style={{ color:'#e2e8f0', fontSize:14, fontWeight:600 }}>Day {currentDay} of 4</div>
                 <div style={{ color:'#64748b', fontSize:12 }}>{dayCheckedInPlayers.length} checked in today</div>
               </div>
               <div style={{ display:'flex', gap:6 }}>
-                {currentDay > 1 && <button onClick={()=>goToDay(currentDay-1)} style={{ padding:'10px 14px', borderRadius:8, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:14, fontWeight:700, fontFamily:"'Oswald',sans-serif", cursor:'pointer' }}>← DAY {currentDay-1}</button>}
-                {currentDay < 4 && <button onClick={()=>{if(confirm('Move to Day '+(currentDay+1)+'?'))goToDay(currentDay+1)}} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Oswald',sans-serif", cursor:'pointer' }}>DAY {currentDay+1} →</button>}
+                {currentDay > 1 && <button onClick={()=>goToDay(currentDay-1)} style={{ padding:'10px 14px', borderRadius:8, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>← DAY {currentDay-1}</button>}
+                {currentDay < 4 && <button onClick={()=>{if(confirm('Move to Day '+(currentDay+1)+'?'))goToDay(currentDay+1)}} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>DAY {currentDay+1} →</button>}
               </div>
             </div>
           </div>
@@ -713,7 +713,7 @@ function EvalView({ evaluator, onLogout }) {
             {evaluators.map(ev => (
               <div key={ev.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid #1e293b' }}>
                 <div style={{ flex:1, color:'#e2e8f0', fontSize:14, fontWeight:600 }}>{ev.name}</div>
-                <div style={{ fontFamily:"'Oswald',sans-serif", fontSize:16, fontWeight:700, color:Y, background:G, padding:'2px 10px', borderRadius:6, letterSpacing:1 }}>{ev.access_code}</div>
+                <div style={{ fontFamily:"'Geo',sans-serif", fontSize:16, fontWeight:700, color:Y, background:G, padding:'2px 10px', borderRadius:6, letterSpacing:1 }}>{ev.access_code}</div>
               </div>
             ))}
           </div>
@@ -724,7 +724,7 @@ function EvalView({ evaluator, onLogout }) {
             {activePlayers.map(p => (
               <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid #1e293b' }}>
                 <PlayerPhoto player={p} size={32} />
-                <span style={{ fontFamily:"'Oswald',sans-serif", fontSize:12, fontWeight:700, color:Y }}>#{p.pinnie_num}</span>
+                <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:Y }}>#{p.pinnie_num}</span>
                 <div style={{ flex:1, color:'#e2e8f0', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</div>
                 <button onClick={()=>{if(confirm('Cut '+p.first_name+' '+p.last_name+'?'))cutPlayer(p.id)}} style={{ padding:'5px 12px', borderRadius:6, border:'none', background:'#7f1d1d', color:'#fca5a5', fontSize:11, fontWeight:600, cursor:'pointer' }}>CUT</button>
               </div>
@@ -734,7 +734,7 @@ function EvalView({ evaluator, onLogout }) {
               {players.filter(p=>p.status==='cut').map(p => (
                 <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid #1e293b', opacity:0.6 }}>
                   <PlayerPhoto player={p} size={32} />
-                  <span style={{ fontFamily:"'Oswald',sans-serif", fontSize:12, fontWeight:700, color:'#64748b' }}>#{p.pinnie_num}</span>
+                  <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:'#64748b' }}>#{p.pinnie_num}</span>
                   <div style={{ flex:1, color:'#64748b', fontSize:13 }}>{p.first_name} {p.last_name} <span style={{ fontSize:10 }}>(cut D{p.cut_after_day})</span></div>
                   <button onClick={()=>uncutPlayer(p.id)} style={{ padding:'5px 12px', borderRadius:6, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:11, fontWeight:600, cursor:'pointer' }}>UNDO</button>
                 </div>
@@ -773,12 +773,12 @@ export default function App() {
     <div style={{ minHeight:'100vh', background:'#020617', display:'flex', flexDirection:'column' }}>
       <div style={{ background:G, padding:'40px 24px', textAlign:'center' }}>
         <div style={{ fontSize:14, color:'#ffffffaa', textTransform:'uppercase', letterSpacing:3, marginBottom:6 }}>University of Oregon</div>
-        <div style={{ fontSize:36, fontWeight:700, color:Y, fontFamily:"'Oswald',sans-serif", letterSpacing:1 }}>CLUB SOCCER TRYOUTS</div>
+        <div style={{ fontSize:36, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", letterSpacing:1 }}>CLUB SOCCER TRYOUTS</div>
         <div style={{ fontSize:14, color:'#ffffffcc', marginTop:8 }}>Fall 2026</div>
       </div>
       <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, padding:32 }}>
-        <button onClick={()=>setMode('player')} style={{ width:'100%', maxWidth:340, padding:20, borderRadius:14, border:'none', background:G, color:Y, fontSize:20, fontWeight:700, fontFamily:"'Oswald',sans-serif", letterSpacing:1, cursor:'pointer', boxShadow:'0 4px 24px '+G+'60' }}>I'M A PLAYER — CHECK IN</button>
-        <button onClick={()=>setMode('eval-login')} style={{ width:'100%', maxWidth:340, padding:20, borderRadius:14, border:'2px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:18, fontWeight:700, fontFamily:"'Oswald',sans-serif", letterSpacing:1, cursor:'pointer' }}>COACH / CAPTAIN LOGIN</button>
+        <button onClick={()=>setMode('player')} style={{ width:'100%', maxWidth:340, padding:20, borderRadius:14, border:'none', background:G, color:Y, fontSize:20, fontWeight:700, fontFamily:"'Geo',sans-serif", letterSpacing:1, cursor:'pointer', boxShadow:'0 4px 24px '+G+'60' }}>I'M A PLAYER — CHECK IN</button>
+        <button onClick={()=>setMode('eval-login')} style={{ width:'100%', maxWidth:340, padding:20, borderRadius:14, border:'2px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:18, fontWeight:700, fontFamily:"'Geo',sans-serif", letterSpacing:1, cursor:'pointer' }}>COACH / CAPTAIN LOGIN</button>
       </div>
     </div>
   )
