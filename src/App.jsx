@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase, uploadPhoto } from './supabase'
 
 // ── CONSTANTS ──
-const G = '#154733', Y = '#FEE123'
+const G = '#007030', Y = '#FEE11A'
 const POSITIONS = ['GK','CB','RB','LB','RB/LB','CDM','CM','CAM','LW','RW','Wing','ST','CF']
 const YEAR_COLORS = { FR:'#60a5fa', SOPH:'#34d399', JUN:'#fbbf24', SEN:'#f87171', GRAD:'#c084fc' }
 const POS_GROUPS = {
