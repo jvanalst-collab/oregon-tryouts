@@ -402,13 +402,100 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
 
 
 // ═══════════════════════════════════════════
+// DEMO DATA (25 example players)
+// ═══════════════════════════════════════════
+const DEMO_PLAYERS = [
+  { id:'demo-1', first_name:'Marcus', last_name:'Rivera', pos1:'ST', pos2:'CF', year:'JUN', pinnie_num:201, phone:'555-0101', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-2', first_name:'Kai', last_name:'Nakamura', pos1:'CAM', pos2:'CM', year:'SOPH', pinnie_num:202, phone:'555-0102', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-3', first_name:'Javier', last_name:'Morales', pos1:'LW', pos2:'ST', year:'SEN', pinnie_num:203, phone:'555-0103', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-4', first_name:'Liam', last_name:'O\'Brien', pos1:'CDM', pos2:'CM', year:'JUN', pinnie_num:204, phone:'555-0104', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-5', first_name:'Nico', last_name:'Ferreira', pos1:'CB', pos2:'CDM', year:'SEN', pinnie_num:205, phone:'555-0105', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-6', first_name:'Andre', last_name:'Williams', pos1:'RW', pos2:'Wing', year:'FR', pinnie_num:206, phone:'555-0106', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-7', first_name:'Tomás', last_name:'Gutierrez', pos1:'GK', pos2:'', year:'JUN', pinnie_num:207, phone:'555-0107', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-8', first_name:'Elias', last_name:'Chen', pos1:'RB', pos2:'RB/LB', year:'SOPH', pinnie_num:208, phone:'555-0108', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-9', first_name:'Dante', last_name:'Rossi', pos1:'CM', pos2:'CAM', year:'FR', pinnie_num:209, phone:'555-0109', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-10', first_name:'Oscar', last_name:'Johansson', pos1:'CB', pos2:'', year:'GRAD', pinnie_num:210, phone:'555-0110', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-11', first_name:'Remy', last_name:'Dupont', pos1:'LB', pos2:'LW', year:'SOPH', pinnie_num:211, phone:'555-0111', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-12', first_name:'Mateo', last_name:'Silva', pos1:'ST', pos2:'Wing', year:'FR', pinnie_num:212, phone:'555-0112', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-13', first_name:'Aiden', last_name:'Park', pos1:'CDM', pos2:'CB', year:'SEN', pinnie_num:213, phone:'555-0113', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-14', first_name:'Zane', last_name:'Mitchell', pos1:'Wing', pos2:'RW', year:'JUN', pinnie_num:214, phone:'555-0114', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-15', first_name:'Finn', last_name:'Kowalski', pos1:'CAM', pos2:'ST', year:'FR', pinnie_num:215, phone:'555-0115', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-16', first_name:'Sam', last_name:'Okafor', pos1:'CB', pos2:'RB', year:'JUN', pinnie_num:216, phone:'555-0116', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-17', first_name:'Leo', last_name:'Kessler', pos1:'CM', pos2:'CDM', year:'SOPH', pinnie_num:217, phone:'555-0117', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-18', first_name:'Hugo', last_name:'Martínez', pos1:'LW', pos2:'CAM', year:'SEN', pinnie_num:218, phone:'555-0118', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-19', first_name:'Beck', last_name:'Lindgren', pos1:'GK', pos2:'', year:'FR', pinnie_num:219, phone:'555-0119', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-20', first_name:'Theo', last_name:'Adeyemi', pos1:'RB/LB', pos2:'Wing', year:'SOPH', pinnie_num:220, phone:'555-0120', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-21', first_name:'Cruz', last_name:'Vega', pos1:'ST', pos2:'LW', year:'JUN', pinnie_num:221, phone:'555-0121', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-22', first_name:'Jasper', last_name:'Nguyen', pos1:'CM', pos2:'CAM', year:'FR', pinnie_num:222, phone:'555-0122', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-23', first_name:'Rowan', last_name:'Petrov', pos1:'CB', pos2:'CDM', year:'SEN', pinnie_num:223, phone:'555-0123', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-24', first_name:'Ezra', last_name:'Thompson', pos1:'RW', pos2:'ST', year:'SOPH', pinnie_num:224, phone:'555-0124', photo_url:'', status:'active', cut_after_day:null },
+  { id:'demo-25', first_name:'Noel', last_name:'GK Fernandez', pos1:'GK', pos2:'', year:'GRAD', pinnie_num:225, phone:'555-0125', photo_url:'', status:'active', cut_after_day:null },
+]
+
+function generateDemoScores(evalIds) {
+  if (!evalIds.length) return { scores: [], checkins: [] }
+  const demoScores = []
+  const demoCheckins = []
+  // Predefined score profiles: [game, intangibles, tags[]]
+  const profiles = [
+    [9,8,['+first_touch','+speed_of_play','+decisions','+elevates','+leader']],
+    [8,9,['+passing','+soccer_iq','+communication','+composure','+coachable']],
+    [9,7,['+1v1','+athletic','+creative','+speed_of_play']],
+    [7,6,['+work_rate','+tracks_back','+positioning','-first_touch']],
+    [8,8,['+defending','+aerial','+communication','+composure','+positioning']],
+    [6,5,['+athletic','-decisions','-passing','-off_ball']],
+    [7,8,['+positioning','+composure','+communication']],
+    [7,7,['+tracks_back','+work_rate','+defending','-speed_of_play']],
+    [5,6,['-first_touch','-speed_of_play','-decisions','+coachable']],
+    [8,7,['+passing','+off_ball','+soccer_iq','+creative']],
+    [6,7,['+work_rate','+tracks_back','+coachable','-1v1']],
+    [4,5,['-first_touch','-passing','-off_ball','-soccer_iq']],
+    [8,8,['+positioning','+defending','+aerial','+communication']],
+    [6,6,['+athletic','+speed_of_play','-decisions','-composure']],
+    [5,4,['-speed_of_play','-off_ball','-communication','-impact']],
+    [7,7,['+defending','+positioning','+tracks_back','-passing']],
+    [7,8,['+passing','+decisions','+composure','+off_ball']],
+    [9,8,['+creative','+1v1','+speed_of_play','+soccer_iq','+leader']],
+    [6,6,['+positioning','+composure','-athletic']],
+    [7,6,['+athletic','+work_rate','+tracks_back','-first_touch']],
+    [8,7,['+1v1','+speed_of_play','+creative','-tracks_back']],
+    [5,5,['-decisions','-composure','-communication','+coachable']],
+    [8,9,['+defending','+aerial','+positioning','+leader','+communication']],
+    [6,7,['+work_rate','+athletic','-passing','-decisions']],
+    [7,7,['+positioning','+composure','+communication']],
+  ]
+
+  DEMO_PLAYERS.forEach((p, pi) => {
+    demoCheckins.push({ id:'dc-'+p.id, player_id:p.id, day_number:1, checked_in:true })
+    const prof = profiles[pi]
+    // Each evaluator scores with slight variance
+    evalIds.forEach((eid, ei) => {
+      const variance = [-1, 0, 1, 0, -1][ei] || 0
+      const g = Math.max(1, Math.min(10, prof[0] + variance))
+      const intg = Math.max(1, Math.min(10, prof[1] + (ei % 2 === 0 ? variance : -variance)))
+      // Only some evaluators add tags
+      const tags = ei < 3 ? JSON.stringify(prof[2].slice(0, Math.max(2, prof[2].length - ei))) : '[]'
+      const notes = pi < 5 && ei === 0 ? ['Top prospect, runs the attack','Orchestrates everything from the middle','Electric on the ball, needs to track back more','Reliable, does the dirty work','Wall at the back, organizes the line'][pi] : ''
+      const rec = g + intg >= 14 ? 'keep' : g + intg <= 10 ? 'cut' : null
+      demoScores.push({
+        id: 'ds-'+p.id+'-'+eid, evaluator_id: eid, player_id: p.id, day_number: 1,
+        game_ability: g, intangibles: intg, tags, notes, recommendation: rec,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      })
+    })
+  })
+  return { scores: demoScores, checkins: demoCheckins }
+}
+
+
+// ═══════════════════════════════════════════
 // MAIN EVALUATOR / COACH VIEW
 // ═══════════════════════════════════════════
 function EvalView({ evaluator, onLogout }) {
   const [view, setView] = useState('roster')
-  const [players, setPlayers] = useState([])
-  const [scores, setScores] = useState([])
-  const [checkins, setCheckins] = useState([])
+  const [dbPlayers, setDbPlayers] = useState([])
+  const [dbScores, setDbScores] = useState([])
+  const [dbCheckins, setDbCheckins] = useState([])
   const [evaluators, setEvaluators] = useState([])
   const [currentDay, setCurrentDay] = useState(1)
   const [posFilter, setPosFilter] = useState('All')
@@ -418,6 +505,7 @@ function EvalView({ evaluator, onLogout }) {
   const [expandedPlayer, setExpandedPlayer] = useState(null)
   const [expandedDash, setExpandedDash] = useState(null)
   const [showCutPlayers, setShowCutPlayers] = useState(false)
+  const [showDemo, setShowDemo] = useState(true)
   const isCoach = evaluator.role === 'coach'
 
   // ── DATA LOADING ──
@@ -429,7 +517,7 @@ function EvalView({ evaluator, onLogout }) {
       supabase.from('evaluators').select('*'),
       supabase.from('app_settings').select('*').eq('key','current_day').single(),
     ])
-    setPlayers(p||[]); setScores(s||[]); setCheckins(c||[]); setEvaluators(e||[])
+    setDbPlayers(p||[]); setDbScores(s||[]); setDbCheckins(c||[]); setEvaluators(e||[])
     if (settings?.value) setCurrentDay(parseInt(settings.value))
   }, [])
 
@@ -445,13 +533,24 @@ function EvalView({ evaluator, onLogout }) {
     return () => { supabase.removeChannel(channel) }
   }, [loadAll])
 
+  // ── MERGE DEMO DATA ──
+  const demoGenerated = useMemo(() => {
+    if (!showDemo || !evaluators.length) return { scores: [], checkins: [] }
+    return generateDemoScores(evaluators.map(e => e.id))
+  }, [showDemo, evaluators])
+
+  const players = useMemo(() => showDemo ? [...DEMO_PLAYERS, ...dbPlayers] : dbPlayers, [dbPlayers, showDemo])
+  const scores = useMemo(() => showDemo ? [...demoGenerated.scores, ...dbScores] : dbScores, [dbScores, demoGenerated, showDemo])
+  const checkins = useMemo(() => showDemo ? [...demoGenerated.checkins, ...dbCheckins] : dbCheckins, [dbCheckins, demoGenerated, showDemo])
+
   // ── HELPERS ──
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
 
   const toggleCheckin = async (playerId, day) => {
-    const existing = checkins.find(c => c.player_id === playerId && c.day_number === day)
+    if (String(playerId).startsWith('demo-')) return // demo players can't be modified
+    const existing = dbCheckins.find(c => c.player_id === playerId && c.day_number === day)
     if (existing) { await supabase.from('day_checkins').update({ checked_in: !existing.checked_in }).eq('id', existing.id) }
     else { await supabase.from('day_checkins').insert({ player_id: playerId, day_number: day, checked_in: true }) }
     loadAll()
@@ -611,6 +710,12 @@ function EvalView({ evaluator, onLogout }) {
             <div style={{ fontSize:16, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>TRYOUT HQ</div>
             <div style={{ fontSize:11, color:'#ffffffaa' }}>{evaluator.name}</div>
           </div>
+          {showDemo && (
+            <button onClick={()=>{if(confirm('Hide demo players? They won\'t come back unless you reload the page.')) setShowDemo(false)}}
+              style={{ padding:'3px 8px', borderRadius:6, border:'1px solid #ffffff30', background:'#ffffff15', color:'#fbbf24', fontSize:10, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }}>
+              DEMO ON ✕
+            </button>
+          )}
           <DayNav />
         </div>
         <div style={{ display:'flex' }}>
