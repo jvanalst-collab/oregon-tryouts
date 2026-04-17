@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase, uploadPhoto } from './supabase'
 
 // ── CONSTANTS ──
-const G = '#104735', Y = '#FEE11A'
+const G = '#154733', Y = '#FEE123'
 const POSITIONS = ['GK','CB','RB','LB','RB/LB','CDM','CM','CAM','LW','RW','Wing','ST','CF']
 const YEAR_COLORS = { FR:'#60a5fa', SOPH:'#34d399', JUN:'#fbbf24', SEN:'#f87171', GRAD:'#c084fc' }
 const POS_GROUPS = {
@@ -11,6 +11,102 @@ const POS_GROUPS = {
   MID: p => ['CM','CDM','CAM','8','10'].some(x => (p.pos1||'').toUpperCase().includes(x)||(p.pos2||'').toUpperCase().includes(x)),
   ATK: p => ['ST','Wing','LW','RW','CF','Winger'].some(x => (p.pos1||'').includes(x)||(p.pos2||'').includes(x)),
   GK: p => (p.pos1||'')==='GK',
+}
+
+// ── FORMATION POSITIONS (4-3-3) ──
+const FORMATION_SLOTS = [
+  { key: 'ST', label: 'ST / CF', match: ['ST','CF'], x: 50, y: 8 },
+  { key: 'LW', label: 'LW / Left Wing', match: ['LW','Wing','Winger'], side: 'left', x: 12, y: 18 },
+  { key: 'RW', label: 'RW / Right Wing', match: ['RW','Wing','Winger'], side: 'right', x: 88, y: 18 },
+  { key: 'CAM', label: 'CAM / 10', match: ['CAM','10'], x: 50, y: 32 },
+  { key: 'CM', label: 'CM / 8', match: ['CM','8'], x: 50, y: 45 },
+  { key: 'CDM', label: 'CDM / 6', match: ['CDM'], x: 50, y: 56 },
+  { key: 'LB', label: 'LB / Left Back', match: ['LB','RB/LB'], side: 'left', x: 12, y: 68 },
+  { key: 'CB', label: 'CB', match: ['CB','DEF'], x: 38, y: 72 },
+  { key: 'CB2', label: 'CB', match: ['CB','DEF'], x: 62, y: 72 },
+  { key: 'RB', label: 'RB / Right Back', match: ['RB','RB/LB','OB'], side: 'right', x: 88, y: 68 },
+  { key: 'GK', label: 'GK', match: ['GK'], x: 50, y: 90 },
+]
+
+// Assign players to position groups for the position list view
+const POS_LIST_GROUPS = [
+  { key: 'DEF', label: 'DEF', match: p => ['CB','RB','LB','RB/LB','OB','DEF'].some(x => (p.pos1||'').toUpperCase().includes(x)||(p.pos2||'').toUpperCase().includes(x)) },
+  { key: 'CM/CDM/CAM', label: 'CM / CDM / CAM', match: p => ['CM','CDM','CAM','8','10'].some(x => (p.pos1||'').toUpperCase().includes(x)||(p.pos2||'').toUpperCase().includes(x)) },
+  { key: 'WING', label: 'WING', match: p => ['Wing','Winger','LW','RW'].some(x => (p.pos1||'').includes(x)||(p.pos2||'').includes(x)) },
+  { key: 'CF/ST', label: 'CF / ST', match: p => ['ST','CF'].some(x => (p.pos1||'').toUpperCase().includes(x)||(p.pos2||'').toUpperCase().includes(x)) },
+  { key: 'GK', label: 'GK', match: p => (p.pos1||'')==='GK' },
+]
+
+// ── EXCEL EXPORT ──
+async function exportRosterToExcel(players, scores, evaluators, currentDay) {
+  // Dynamically load SheetJS
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js'
+      script.onload = resolve; script.onerror = reject
+      document.head.appendChild(script)
+    })
+  }
+  const XLSX = window.XLSX
+  const wb = XLSX.utils.book_new()
+
+  // Sheet 1: Evaluation sheet matching original format
+  const evalRows = [['#', 'First Name', 'Last Name', 'Position (primary, secondary)', 'Year', 'Other identifiers', 'Game Ability', 'Intangibles', 'Notes', 'Recommendation']]
+  players.filter(p=>p.status==='active').sort((a,b)=>a.pinnie_num-b.pinnie_num).forEach(p => {
+    evalRows.push([p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year, '', '', '', '', ''])
+  })
+  const ws1 = XLSX.utils.aoa_to_sheet(evalRows)
+  ws1['!cols'] = [{wch:5},{wch:14},{wch:18},{wch:30},{wch:8},{wch:18},{wch:14},{wch:14},{wch:30},{wch:18}]
+  XLSX.utils.book_append_sheet(wb, ws1, 'Evaluation Sheet')
+
+  // Sheet 2: By Position (like original spreadsheet)
+  const posGroups = POS_LIST_GROUPS.map(g => ({
+    label: g.label,
+    players: players.filter(p => p.status==='active' && g.match(p)).sort((a,b) => a.pinnie_num-b.pinnie_num)
+  }))
+  const maxLen = Math.max(...posGroups.map(g => g.players.length)) + 1
+  const posRows = []
+  // Header row
+  const headerRow = []
+  posGroups.forEach((g, gi) => {
+    if (gi > 0) headerRow.push('') // spacer
+    headerRow.push(g.label, '', '', '', '')
+  })
+  posRows.push(headerRow)
+  // Data rows
+  for (let i = 0; i < maxLen; i++) {
+    const row = []
+    posGroups.forEach((g, gi) => {
+      if (gi > 0) row.push('')
+      const p = g.players[i]
+      if (p) { row.push(p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year) }
+      else { row.push('','','','','') }
+    })
+    posRows.push(row)
+  }
+  const ws2 = XLSX.utils.aoa_to_sheet(posRows)
+  XLSX.utils.book_append_sheet(wb, ws2, 'By Position')
+
+  // Sheet 3: Scores Summary (if scores exist)
+  const scoreRows = [['#', 'First Name', 'Last Name', 'Position', 'Year', 'Avg Game', 'Avg Intangibles', 'Avg Total', '# Evals', 'Tags', 'Notes']]
+  players.filter(p=>p.status==='active').sort((a,b)=>a.pinnie_num-b.pinnie_num).forEach(p => {
+    const pScores = scores.filter(s => s.player_id === p.id)
+    const games = pScores.map(s=>s.game_ability).filter(v=>v!=null)
+    const ints = pScores.map(s=>s.intangibles).filter(v=>v!=null)
+    const avgG = games.length ? (games.reduce((a,b)=>a+b,0)/games.length).toFixed(1) : ''
+    const avgI = ints.length ? (ints.reduce((a,b)=>a+b,0)/ints.length).toFixed(1) : ''
+    const avgT = avgG && avgI ? ((parseFloat(avgG)+parseFloat(avgI))/2).toFixed(1) : ''
+    const allTags = pScores.flatMap(s => { try { return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[] } catch{return[]} })
+    const tagLabels = [...new Set(allTags)].map(t => { const info = POS_TAGS.find(pt=>pt.val===t); return info?info.label:t }).join(', ')
+    const notes = pScores.filter(s=>s.notes).map(s => { const ev = evaluators.find(e=>e.id===s.evaluator_id); return (ev?.name||'?')+' (D'+s.day_number+'): '+s.notes }).join(' | ')
+    scoreRows.push([p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year, avgG, avgI, avgT, games.length, tagLabels, notes])
+  })
+  const ws3 = XLSX.utils.aoa_to_sheet(scoreRows)
+  ws3['!cols'] = [{wch:5},{wch:14},{wch:18},{wch:20},{wch:8},{wch:10},{wch:14},{wch:10},{wch:8},{wch:40},{wch:60}]
+  XLSX.utils.book_append_sheet(wb, ws3, 'Scores Summary')
+
+  XLSX.writeFile(wb, 'Oregon_Tryouts_Day_'+currentDay+'.xlsx')
 }
 
 // ── EVALUATION TAGS ──
@@ -521,6 +617,7 @@ function EvalView({ evaluator, onLogout }) {
           <button onClick={()=>setView('roster')} style={tabStyle('roster')}>Roster</button>
           <button onClick={()=>setView('score')} style={tabStyle('score')}>Score</button>
           <button onClick={()=>setView('dashboard')} style={tabStyle('dashboard')}>Results</button>
+          <button onClick={()=>setView('positions')} style={tabStyle('positions')}>Positions</button>
           {isCoach && <button onClick={()=>setView('manage')} style={tabStyle('manage')}>Manage</button>}
         </div>
       </div>
@@ -689,9 +786,108 @@ function EvalView({ evaluator, onLogout }) {
         </div>
       )}
 
+      {/* ══ POSITIONS TAB ══ */}
+      {view === 'positions' && (
+        <div style={{ padding:16 }}>
+          {activePlayers.length === 0 ? emptyState('⚽','No players to display.') : (<>
+            {/* Formation Diagram */}
+            <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>4-3-3 Formation View</div>
+              <div style={{ position:'relative', width:'100%', paddingBottom:'130%', background:'linear-gradient(180deg, #0d3320 0%, #154733 50%, #0d3320 100%)', borderRadius:12, border:'2px solid #1e5c3a', overflow:'hidden' }}>
+                {/* Field markings */}
+                <div style={{ position:'absolute', top:'50%', left:'10%', right:'10%', height:1, background:'#ffffff20' }} />
+                <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:60, height:60, borderRadius:'50%', border:'1px solid #ffffff20' }} />
+                <div style={{ position:'absolute', bottom:0, left:'20%', right:'20%', height:'18%', border:'1px solid #ffffff15', borderBottom:'none' }} />
+                <div style={{ position:'absolute', top:0, left:'20%', right:'20%', height:'18%', border:'1px solid #ffffff15', borderTop:'none' }} />
+                {/* Position slots */}
+                {FORMATION_SLOTS.map(slot => {
+                  const matchingPlayers = activePlayers.filter(p => {
+                    const p1 = (p.pos1||'').toUpperCase(), p2 = (p.pos2||'').toUpperCase()
+                    // For wings, check side preference
+                    if (slot.key === 'LW') return ['LW'].some(x => p1.includes(x)) || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)) && !['RW'].some(x => p1.includes(x)))
+                    if (slot.key === 'RW') return ['RW'].some(x => p1.includes(x)) || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)))
+                    if (slot.key === 'CB2') return slot.match.some(x => p1.includes(x.toUpperCase())||p2.includes(x.toUpperCase()))
+                    if (slot.key === 'CB') return false // CB2 handles all CBs
+                    return slot.match.some(x => p1.includes(x.toUpperCase())||p2.includes(x.toUpperCase()))
+                  })
+                  // For CB, split into two groups
+                  let displayPlayers = matchingPlayers
+                  if (slot.key === 'CB') {
+                    displayPlayers = matchingPlayers.slice(0, Math.ceil(matchingPlayers.length/2))
+                  }
+                  if (slot.key === 'CB2') {
+                    const allCBs = activePlayers.filter(p => slot.match.some(x => (p.pos1||'').toUpperCase().includes(x.toUpperCase())||(p.pos2||'').toUpperCase().includes(x.toUpperCase())))
+                    displayPlayers = allCBs
+                  }
+                  // Skip CB slot (CB2 handles all)
+                  if (slot.key === 'CB') return null
+                  return (
+                    <div key={slot.key} style={{ position:'absolute', left:slot.x+'%', top:slot.y+'%', transform:'translate(-50%,-50%)', textAlign:'center', minWidth:70, maxWidth:100 }}>
+                      <div style={{ fontSize:10, color:Y, fontWeight:700, fontFamily:"'Geo',sans-serif", marginBottom:3, textTransform:'uppercase', textShadow:'0 1px 3px rgba(0,0,0,0.5)' }}>{slot.label}</div>
+                      {(slot.key==='CB2' ? displayPlayers : matchingPlayers).slice(0,5).map(p => (
+                        <div key={p.id} style={{ fontSize:9, color:'#e2e8f0', background:'#00000060', padding:'1px 5px', borderRadius:3, marginBottom:1, whiteSpace:'nowrap' }}>
+                          #{p.pinnie_num} {p.last_name}
+                        </div>
+                      ))}
+                      {(slot.key==='CB2' ? displayPlayers : matchingPlayers).length > 5 && (
+                        <div style={{ fontSize:8, color:'#ffffff60' }}>+{(slot.key==='CB2' ? displayPlayers : matchingPlayers).length-5} more</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Position List (like the spreadsheet view) */}
+            <div style={{ background:'#0f172a', borderRadius:12, padding:16 }}>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:12 }}>Position Groups</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:16 }}>
+                {POS_LIST_GROUPS.map(group => {
+                  const groupPlayers = activePlayers.filter(group.match).sort((a,b)=>a.pinnie_num-b.pinnie_num)
+                  if (groupPlayers.length === 0) return null
+                  return (
+                    <div key={group.key}>
+                      <div style={{ fontSize:13, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", padding:'4px 10px', background:G, borderRadius:'6px 6px 0 0', borderBottom:'2px solid '+Y }}>
+                        {group.label} ({groupPlayers.length})
+                      </div>
+                      <div style={{ border:'1px solid #1e293b', borderTop:'none', borderRadius:'0 0 6px 6px' }}>
+                        {groupPlayers.map((p,pi) => {
+                          // Get avg score if available
+                          const pScores = scores.filter(s=>s.player_id===p.id)
+                          const games = pScores.map(s=>s.game_ability).filter(v=>v!=null)
+                          const avg = games.length ? ((games.reduce((a,b)=>a+b,0)/games.length + pScores.map(s=>s.intangibles).filter(v=>v!=null).reduce((a,b)=>a+b,0)/games.length)/2).toFixed(1) : null
+                          return (
+                            <div key={p.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'6px 10px', borderBottom:pi<groupPlayers.length-1?'1px solid #1e293b':'none', fontSize:12 }}>
+                              <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, width:28 }}>{p.pinnie_num}</span>
+                              <span style={{ color:'#f1f5f9', fontWeight:600, flex:1 }}>{p.first_name} <b>{p.last_name}</b></span>
+                              <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?','+p.pos2:''}</span>
+                              <span style={{ fontSize:10, color:'#0f172a', background:YEAR_COLORS[p.year]||'#64748b', padding:'1px 5px', borderRadius:3, fontWeight:600 }}>{p.year}</span>
+                              {avg && <span style={{ fontSize:11, color:parseFloat(avg)>=7?Y:'#94a3b8', fontWeight:700 }}>{avg}</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </>)}
+        </div>
+      )}
+
       {/* ══ MANAGE TAB (Coach only) ══ */}
       {view === 'manage' && isCoach && (
         <div style={{ padding:16 }}>
+          {/* Export button */}
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
+            <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Export</div>
+            <div style={{ color:'#64748b', fontSize:12, marginBottom:12 }}>Download a printable Excel file with evaluation sheet, position groups, and score summaries.</div>
+            <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay)} style={{ padding:'10px 20px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
+              📥 EXPORT TO EXCEL
+            </button>
+          </div>
+
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
             <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Day Navigation</div>
             <div style={{ display:'flex', alignItems:'center', gap:12 }}>
