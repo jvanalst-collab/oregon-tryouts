@@ -563,6 +563,342 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
 
 
 // ═══════════════════════════════════════════
+// UPLOAD EVALUATION SHEETS
+// ═══════════════════════════════════════════
+function UploadEvalTab({ evaluators, players, currentDay, onSaved }) {
+  const [selectedEval, setSelectedEval] = useState('')
+  const [file, setFile] = useState(null)
+  const [filePreview, setFilePreview] = useState(null)
+  const [processing, setProcessing] = useState(false)
+  const [extracted, setExtracted] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  const fileRef = useRef()
+
+  const handleFile = (e) => {
+    const f = e.target.files[0]; if (!f) return
+    setFile(f); setExtracted(null); setSaved(false); setError('')
+    const reader = new FileReader()
+    reader.onload = (ev) => setFilePreview(ev.target.result)
+    reader.readAsDataURL(f)
+  }
+
+  const processSheet = async () => {
+    if (!selectedEval) return setError('Select which evaluator filled out this sheet.')
+    if (!file) return setError('Upload a scanned evaluation sheet.')
+    setProcessing(true); setError(''); setExtracted(null)
+
+    try {
+      const base64 = filePreview.split(',')[1]
+      const mediaType = file.type || 'image/jpeg'
+      const isPdf = file.name.toLowerCase().endsWith('.pdf') || mediaType === 'application/pdf'
+
+      // Build the content for Claude
+      const imageContent = isPdf
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+        : { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }
+
+      // Known players for matching
+      const playerList = players.map(p => `#${p.pinnie_num}: ${p.first_name} ${p.last_name}`).join('\n')
+
+      const tagList = POS_TAGS.map(t => `"${t.val}": ${t.label}`).join('\n')
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{
+            role: 'user',
+            content: [
+              imageContent,
+              { type: 'text', text: `You are reading a scanned soccer tryout evaluation sheet. Extract the evaluation data for each player.
+
+The sheet has this layout per player (3 rows per player):
+- Row 1: Pinnie # | Name | Position | Year | Game Ability score (1-10, handwritten) | Intangibles score (1-10, handwritten) | K/C/? (Keep/Cut/?) | Then positive tags (green text, white background) that may be circled/marked/checked
+- Row 2: Same player continued — negative tags (red text, light pink background) that may be circled/marked/checked  
+- Row 3: Same player continued — extra positive then extra negative tags
+
+A tag is "selected" if it has ANY mark on it — circle, check mark, X, underline, highlight, or any handwritten mark near it. Unmarked/clean tags are NOT selected.
+
+The handwritten K/C/? column may contain: K or ✓ (keep), C or ✗ (cut), or ? (undecided).
+
+Known players in the system:
+${playerList}
+
+Known tag values:
+${tagList}
+
+Respond with ONLY a JSON array, no other text, no markdown backticks. Each element:
+{
+  "pinnie_num": <number>,
+  "game_ability": <number 1-10 or null if blank/unreadable>,
+  "intangibles": <number 1-10 or null if blank/unreadable>,
+  "recommendation": <"keep" or "cut" or null>,
+  "tags": [<array of tag val strings like "+first_touch", "-passing", etc>],
+  "notes": "<any handwritten notes, or empty string>"
+}
+
+Only include players where you can read at least the pinnie number. Skip completely blank rows.` }
+            ]
+          }]
+        })
+      })
+
+      const data = await response.json()
+      const text = data.content?.map(c => c.text || '').join('') || ''
+
+      // Parse JSON — handle possible markdown fences
+      const clean = text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(clean)
+
+      // Match to known players
+      const matched = parsed.map(entry => {
+        const player = players.find(p => p.pinnie_num === entry.pinnie_num)
+        return {
+          ...entry,
+          player,
+          matched: !!player,
+          playerName: player ? `${player.first_name} ${player.last_name}` : `Unknown #${entry.pinnie_num}`,
+        }
+      }).filter(e => e.matched)
+
+      setExtracted(matched)
+      if (matched.length === 0) setError('Could not match any players from the scan. Check that pinnie numbers match.')
+    } catch (err) {
+      setError('Error processing sheet: ' + (err.message || 'Unknown error'))
+    }
+    setProcessing(false)
+  }
+
+  const updateExtracted = (index, field, value) => {
+    setExtracted(prev => prev.map((e, i) => i === index ? { ...e, [field]: value } : e))
+  }
+
+  const removeTag = (index, tagVal) => {
+    setExtracted(prev => prev.map((e, i) => i === index ? { ...e, tags: e.tags.filter(t => t !== tagVal) } : e))
+  }
+
+  const saveAll = async () => {
+    if (!extracted || !selectedEval) return
+    setSaving(true); setError('')
+    try {
+      for (const entry of extracted) {
+        if (!entry.player) continue
+        const existing = await supabase.from('scores')
+          .select('id')
+          .eq('evaluator_id', selectedEval)
+          .eq('player_id', entry.player.id)
+          .eq('day_number', currentDay)
+          .single()
+
+        const scoreData = {
+          evaluator_id: selectedEval,
+          player_id: entry.player.id,
+          day_number: currentDay,
+          game_ability: entry.game_ability,
+          intangibles: entry.intangibles,
+          tags: JSON.stringify(entry.tags || []),
+          notes: entry.notes || '',
+          recommendation: entry.recommendation,
+          updated_at: new Date().toISOString(),
+        }
+
+        if (existing?.data?.id) {
+          await supabase.from('scores').update(scoreData).eq('id', existing.data.id)
+        } else {
+          await supabase.from('scores').insert(scoreData)
+        }
+      }
+      setSaved(true)
+      onSaved()
+    } catch (err) {
+      setError('Error saving scores: ' + err.message)
+    }
+    setSaving(false)
+  }
+
+  const reset = () => {
+    setFile(null); setFilePreview(null); setExtracted(null); setSaved(false); setError('')
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  return (
+    <div style={{ padding:16 }}>
+      <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:12 }}>
+        Upload Scanned Evaluation Sheet
+      </div>
+
+      {saved ? (
+        <div style={{ textAlign:'center', padding:'40px 20px' }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>✅</div>
+          <div style={{ fontSize:18, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", marginBottom:8 }}>
+            {extracted.length} PLAYER SCORES SAVED
+          </div>
+          <div style={{ color:'#94a3b8', fontSize:13, marginBottom:20 }}>
+            {evaluators.find(e=>e.id===selectedEval)?.name}'s evaluations for Day {currentDay} have been saved.
+            Check the Results tab to see updated averages.
+          </div>
+          <button onClick={reset} style={{ padding:'10px 24px', borderRadius:8, border:'none', background:G, color:Y, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
+            UPLOAD ANOTHER SHEET
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Step 1: Select evaluator */}
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:12 }}>
+            <div style={{ color:'#94a3b8', fontSize:12, fontWeight:600, marginBottom:8 }}>1. Who filled out this sheet?</div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {evaluators.map(ev => (
+                <button key={ev.id} onClick={()=>setSelectedEval(ev.id)} style={{
+                  padding:'8px 14px', borderRadius:8, border:'none', cursor:'pointer',
+                  background: selectedEval===ev.id ? G : '#1e293b',
+                  color: selectedEval===ev.id ? Y : '#94a3b8',
+                  fontSize:14, fontWeight:600,
+                  boxShadow: selectedEval===ev.id ? '0 0 0 1px '+Y+'40' : 'none',
+                }}>{ev.name}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Step 2: Upload file */}
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:12 }}>
+            <div style={{ color:'#94a3b8', fontSize:12, fontWeight:600, marginBottom:8 }}>2. Upload the scanned sheet (PDF or photo)</div>
+            <input ref={fileRef} type="file" accept="image/*,.pdf" onChange={handleFile} style={{ display:'none' }} />
+            {file ? (
+              <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                <div style={{ background:'#1e293b', padding:'8px 14px', borderRadius:8, color:'#e2e8f0', fontSize:13, flex:1 }}>
+                  📄 {file.name} ({(file.size/1024).toFixed(0)} KB)
+                </div>
+                <button onClick={reset} style={{ padding:'6px 12px', borderRadius:6, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:12, cursor:'pointer' }}>Change</button>
+              </div>
+            ) : (
+              <button onClick={()=>fileRef.current.click()} style={{
+                width:'100%', padding:'24px 14px', borderRadius:12, border:'2px dashed #334155',
+                background:'transparent', color:'#64748b', fontSize:14, cursor:'pointer',
+                display:'flex', flexDirection:'column', alignItems:'center', gap:6,
+              }}>
+                <span style={{ fontSize:32 }}>📄</span>
+                <span style={{ fontWeight:600 }}>Tap to upload scan</span>
+                <span style={{ fontSize:12, color:'#475569' }}>PDF or photo of the evaluation sheet</span>
+              </button>
+            )}
+          </div>
+
+          {/* Step 3: Process */}
+          {file && selectedEval && !extracted && (
+            <button onClick={processSheet} disabled={processing} style={{
+              width:'100%', padding:14, borderRadius:12, border:'none', marginBottom:12,
+              background: processing ? '#1e293b' : G, color: processing ? '#64748b' : Y,
+              fontSize:16, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor: processing?'wait':'pointer',
+            }}>
+              {processing ? '⏳ READING SHEET... (this takes ~15 seconds)' : '🔍 PROCESS SHEET'}
+            </button>
+          )}
+
+          {error && <div style={{ background:'#7f1d1d40', color:'#fca5a5', padding:'10px 14px', borderRadius:8, marginBottom:12, fontSize:13 }}>{error}</div>}
+
+          {/* Step 4: Preview extracted data */}
+          {extracted && extracted.length > 0 && (
+            <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:12 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                <div style={{ color:'#94a3b8', fontSize:12, fontWeight:600 }}>
+                  3. Review extracted scores ({extracted.length} players)
+                </div>
+                <div style={{ color:'#475569', fontSize:11 }}>Edit any errors before saving</div>
+              </div>
+
+              {extracted.map((entry, idx) => (
+                <div key={idx} style={{ background:'#1e293b', borderRadius:10, padding:12, marginBottom:8 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
+                    <span style={{ fontFamily:"'Geo',sans-serif", fontSize:15, fontWeight:700, color:Y, background:G, padding:'1px 7px', borderRadius:4 }}>#{entry.pinnie_num}</span>
+                    <span style={{ color:'#f1f5f9', fontSize:14, fontWeight:600 }}>{entry.playerName}</span>
+                    {entry.recommendation && (
+                      <span style={{ fontSize:11, padding:'2px 8px', borderRadius:4, marginLeft:'auto',
+                        background: entry.recommendation==='keep' ? G+'30' : '#7f1d1d30',
+                        color: entry.recommendation==='keep' ? Y : '#fca5a5', fontWeight:600
+                      }}>{entry.recommendation==='keep'?'✓ KEEP':'✗ CUT'}</span>
+                    )}
+                  </div>
+
+                  {/* Editable scores */}
+                  <div style={{ display:'flex', gap:12, marginBottom:8, flexWrap:'wrap' }}>
+                    <div>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Game Ability</div>
+                      <select value={entry.game_ability||''} onChange={e=>updateExtracted(idx,'game_ability',e.target.value?parseInt(e.target.value):null)}
+                        style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:14, fontWeight:700 }}>
+                        <option value="">—</option>
+                        {[1,2,3,4,5,6,7,8,9,10].map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Intangibles</div>
+                      <select value={entry.intangibles||''} onChange={e=>updateExtracted(idx,'intangibles',e.target.value?parseInt(e.target.value):null)}
+                        style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:14, fontWeight:700 }}>
+                        <option value="">—</option>
+                        {[1,2,3,4,5,6,7,8,9,10].map(v=><option key={v} value={v}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Recommendation</div>
+                      <select value={entry.recommendation||''} onChange={e=>updateExtracted(idx,'recommendation',e.target.value||null)}
+                        style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:13 }}>
+                        <option value="">—</option>
+                        <option value="keep">Keep</option>
+                        <option value="cut">Cut</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Tags */}
+                  {entry.tags && entry.tags.length > 0 && (
+                    <div style={{ marginBottom:6 }}>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Tags (tap to remove)</div>
+                      <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                        {entry.tags.map(tagVal => {
+                          const tagInfo = POS_TAGS.find(t=>t.val===tagVal)
+                          const isPos = tagInfo?.pos ?? !tagVal.startsWith('-')
+                          return <button key={tagVal} onClick={()=>removeTag(idx,tagVal)} style={{
+                            padding:'3px 8px', borderRadius:12, border:'none', fontSize:11, cursor:'pointer',
+                            background: isPos ? G+'25' : '#7f1d1d25',
+                            color: isPos ? '#6ee7b7' : '#fca5a5', fontWeight:600,
+                          }}>✕ {tagInfo?.label||tagVal}</button>
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {entry.notes && (
+                    <div>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Notes</div>
+                      <input value={entry.notes} onChange={e=>updateExtracted(idx,'notes',e.target.value)}
+                        style={{ width:'100%', padding:'6px 10px', borderRadius:6, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:13, boxSizing:'border-box' }} />
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* Save button */}
+              <button onClick={saveAll} disabled={saving} style={{
+                width:'100%', padding:14, borderRadius:12, border:'none', marginTop:8,
+                background: saving ? '#1e293b' : Y, color: G,
+                fontSize:16, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor: saving?'wait':'pointer',
+              }}>
+                {saving ? 'SAVING...' : `✓ SAVE ${extracted.length} EVALUATIONS TO DAY ${currentDay}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+
+// ═══════════════════════════════════════════
 // DEMO DATA (25 example players)
 // ═══════════════════════════════════════════
 const DEMO_PLAYERS = [
@@ -884,6 +1220,7 @@ function EvalView({ evaluator, onLogout }) {
           <button onClick={()=>setView('score')} style={tabStyle('score')}>Score</button>
           <button onClick={()=>setView('dashboard')} style={tabStyle('dashboard')}>Results</button>
           <button onClick={()=>setView('positions')} style={tabStyle('positions')}>Positions</button>
+          <button onClick={()=>setView('upload')} style={tabStyle('upload')}>Upload</button>
           {isCoach && <button onClick={()=>setView('manage')} style={tabStyle('manage')}>Manage</button>}
         </div>
       </div>
@@ -1149,6 +1486,16 @@ function EvalView({ evaluator, onLogout }) {
             </div>
           </>)}
         </div>
+      )}
+
+      {/* ══ UPLOAD TAB ══ */}
+      {view === 'upload' && (
+        <UploadEvalTab
+          evaluators={evaluators}
+          players={activePlayers}
+          currentDay={currentDay}
+          onSaved={loadAll}
+        />
       )}
 
       {/* ══ MANAGE TAB (Coach only) ══ */}
