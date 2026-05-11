@@ -645,7 +645,10 @@ Only include players where you can read at least the pinnie number. Skip complet
         })
       })
 
-      const data = await response.json()
+      const responseText = await response.text()
+      let data
+      try { data = JSON.parse(responseText) } catch { throw new Error('Invalid response: ' + responseText.slice(0, 300)) }
+      if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error))
       const text = data.content?.map(c => c.text || '').join('') || ''
 
       // Parse JSON — handle possible markdown fences
