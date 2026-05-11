@@ -77,11 +77,10 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const wb = new ExcelJS.Workbook()
 
   // ═══ SHEET 1: EVALUATION SHEET ═══
-  const ws = wb.addWorksheet('Evaluation Sheet', {
-    pageSetup: { orientation:'landscape', paperSize:1, fitToPage:false,
-      margins:{ left:0.25, right:0.25, top:0.3, bottom:0.3 } },
-    properties: { defaultRowHeight: 20 }
-  })
+  const ws = wb.addWorksheet('Evaluation Sheet')
+  ws.pageSetup.orientation = 'landscape'
+  ws.pageSetup.paperSize = 1
+  ws.pageSetup.margins = { left:0.25, right:0.25, top:0.3, bottom:0.3, header:0.1, footer:0.1 }
 
   // Column widths (ExcelJS units are slightly narrower than openpyxl)
   ws.getColumn(1).width = 8     // #
@@ -127,9 +126,6 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const notesHdr = ws.getCell(4, notesCol)
   notesHdr.value = 'Notes'; notesHdr.font = f14b; notesHdr.fill = hdrFill; notesHdr.alignment = ctr; notesHdr.border = thinBorder
   ws.getRow(4).height = 38
-
-  // Repeat headers on every printed page
-  ws.pageSetup.printTitlesRow = '1:4'
 
   // ─── Player rows (3 rows each) ───
   let row = 5
@@ -184,10 +180,10 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       const c = ws.getCell(r3, negStart + 1 + ti)
       c.value = tag; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
     })
-    // Fill remaining cells in row 3
+    // Fill remaining cells in row 3 with gray
     for (let ci = negStart + 1 + extraNeg.length; ci < notesCol; ci++) {
       const c = ws.getCell(r3, ci)
-      c.fill = grayFill; c.border = thinBorder
+      c.fill = grayFill
     }
 
     // Notes column — merge across 3 rows
@@ -200,10 +196,13 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     ws.getRow(r2).height = 24
     ws.getRow(r3).height = 24
 
-    // Thick bottom border on row 3 — tag cells only (info + notes already handled via merge)
+    // Thick bottom border on row 3 tag cells — set border once per cell
     for (let ci = 8; ci < notesCol; ci++) {
       const c = ws.getCell(r3, ci)
+      // Preserve existing fill if set
+      const existingFill = c.fill
       c.border = playerBottomBorder
+      if (existingFill && existingFill.type) c.fill = existingFill
     }
 
     row += 3
