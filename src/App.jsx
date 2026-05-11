@@ -39,81 +39,235 @@ const POS_LIST_GROUPS = [
 
 // ── EXCEL EXPORT ──
 async function exportRosterToExcel(players, scores, evaluators, currentDay, checkins) {
-  if (!window.XLSX) {
+  // Load ExcelJS from CDN (supports full styling unlike free SheetJS)
+  if (!window.ExcelJS) {
     await new Promise((resolve, reject) => {
       const script = document.createElement('script')
-      script.src = 'https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js'
+      script.src = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js'
       script.onload = resolve; script.onerror = reject
       document.head.appendChild(script)
     })
   }
-  const XLSX = window.XLSX
-  const wb = XLSX.utils.book_new()
+
   const active = players.filter(p => p.status === 'active').sort((a,b) => a.pinnie_num - b.pinnie_num)
   const checkedIn = active.filter(p => (checkins||[]).find(c => c.player_id === p.id && c.day_number === currentDay && c.checked_in))
   const roster = checkedIn.length > 0 ? checkedIn : active
 
-  // Sheet 1: Blank Evaluation Sheet (print 5 copies — one per evaluator)
-  const evalRows = [
-    ['OREGON CLUB SOCCER — TRYOUT EVALUATION — DAY ' + currentDay, '', '', '', '', '', '', ''],
-    ['Evaluator Name: _______________________', '', '', '', '', '', '', ''],
-    [],
-    ['#', 'Name', 'Position', 'Year', 'Game Ability (1-10)', 'Intangibles (1-10)', 'Keep / Cut / ?', 'Notes']
-  ]
-  roster.forEach(p => {
-    evalRows.push([p.pinnie_num, p.first_name + ' ' + p.last_name, p.pos1 + (p.pos2 ? ', ' + p.pos2 : ''), p.year, '', '', '', ''])
-  })
-  evalRows.push([], ['QUICK REFERENCE — Tags to write in Notes column:'])
-  evalRows.push(['STRENGTHS:', 'Great first touch', 'Quick speed of play', 'Smart decisions', 'Accurate passer', 'Strong off-ball', 'Wins 1v1s', 'High work rate'])
-  evalRows.push(['', 'Vocal/communicates', 'Composed', 'Great positioning', 'Makes others better', 'Athletic/fast', 'Tracks back', 'Good soccer brain'])
-  evalRows.push(['', 'Creative in attack', 'Strong defender', 'Coachable', 'Leader', 'Wins aerials', '', ''])
-  evalRows.push(['WEAKNESSES:', 'Poor first touch', 'Slow speed of play', 'Poor decisions', 'Poor passing', 'Ball watches', 'Avoids 1v1s', 'Low work rate'])
-  evalRows.push(['', "Doesn't communicate", 'Loses composure', 'Poor positioning', 'No impact', 'Lacks athleticism', "Doesn't track back", 'Slow to read game'])
-  const ws1 = XLSX.utils.aoa_to_sheet(evalRows)
-  ws1['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:16},{wch:16},{wch:14},{wch:40}]
-  ws1['!merges'] = [{s:{r:0,c:0},e:{r:0,c:7}}, {s:{r:1,c:0},e:{r:1,c:4}}]
-  XLSX.utils.book_append_sheet(wb, ws1, 'Evaluation Sheet')
+  const posTags = ['1st Touch','Speed','Decisions','Passing','Off-ball','1v1','Work Rate','Vocal','Composed','Positioning','Elevates','Athletic','Soccer IQ']
+  const negTags = ['1st Touch','Speed','Decisions','Passing','Static','1v1','Work Rate','Quiet','Composure','Positioning','No Impact','Unathletic','Slow Read']
+  const extraPos = ['Creative','Defending','Coachable','Leader','Aerial','Tracks Back']
+  const extraNeg = ['Won\'t Track','No Impact','Slow Read']
+  const numTagCols = posTags.length + 1 // +1 for the +/- label column
+  const notesCol = 7 + numTagCols + 1
 
-  // Sheet 2: By Position (grouped vertically, one group after another)
-  const posRows = []
+  const thin = { style:'thin', color:{ argb:'FFBFBFBF' } }
+  const thickB = { style:'thick', color:{ argb:'FF333333' } }
+  const f14 = { name:'Arial', size:14 }
+  const f14b = { name:'Arial', size:14, bold:true }
+  const hdrFill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFE8E8E8' } }
+  const wFill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFFFFF' } }
+  const rFill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF2D7D5' } }
+  const grayFill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF7F7F7' } }
+  const ctrWrap = { horizontal:'center', vertical:'middle', wrapText:true }
+  const ctr = { horizontal:'center', vertical:'middle' }
+  const leftMid = { horizontal:'left', vertical:'middle' }
+  const thinBorder = { top:thin, bottom:thin, left:thin, right:thin }
+  const playerBottomBorder = { top:thin, bottom:thickB, left:thin, right:thin }
+
+  const wb = new ExcelJS.Workbook()
+
+  // ═══ SHEET 1: EVALUATION SHEET ═══
+  const ws = wb.addWorksheet('Evaluation Sheet', {
+    pageSetup: { orientation:'landscape', paperSize:1, fitToPage:false,
+      margins:{ left:0.25, right:0.25, top:0.3, bottom:0.3 } },
+    properties: { defaultRowHeight: 20 }
+  })
+
+  // Column widths
+  ws.getColumn(1).width = 6    // #
+  ws.getColumn(2).width = 28   // Name
+  ws.getColumn(3).width = 16   // Pos
+  ws.getColumn(4).width = 7    // Year
+  ws.getColumn(5).width = 10   // Game
+  ws.getColumn(6).width = 10   // Intang
+  ws.getColumn(7).width = 8    // K/C
+  for (let i = 8; i < 8 + numTagCols; i++) ws.getColumn(i).width = 14
+  ws.getColumn(notesCol).width = 34
+
+  // Row 1: Title
+  ws.mergeCells(1, 1, 1, notesCol)
+  const titleCell = ws.getCell(1, 1)
+  titleCell.value = 'OREGON CLUB SOCCER — TRYOUT EVALUATION — DAY ' + currentDay
+  titleCell.font = { ...f14b, color:{ argb:'FF333333' } }
+  titleCell.fill = hdrFill
+  titleCell.alignment = ctr
+  ws.getRow(1).height = 36
+
+  // Row 2: Evaluator name
+  ws.mergeCells(2, 1, 2, 8)
+  ws.getCell(2, 1).value = 'Evaluator Name: _________________________________'
+  ws.getCell(2, 1).font = { ...f14, italic:true }
+  ws.getCell(2, 1).alignment = leftMid
+  ws.getRow(2).height = 30
+
+  // Row 3: spacer
+  ws.getRow(3).height = 6
+
+  // Row 4: Column headers
+  const hdrs = ['#','Name','Pos','Yr','Game\n(1-10)','Intang\n(1-10)','K/C/?']
+  hdrs.forEach((h, i) => {
+    const c = ws.getCell(4, i + 1)
+    c.value = h; c.font = f14b; c.fill = hdrFill; c.alignment = ctrWrap; c.border = thinBorder
+  })
+  // Tag header merged
+  ws.mergeCells(4, 8, 4, 7 + numTagCols)
+  const tagHdr = ws.getCell(4, 8)
+  tagHdr.value = 'CIRCLE APPLICABLE TAGS'; tagHdr.font = f14b; tagHdr.fill = hdrFill; tagHdr.alignment = ctr; tagHdr.border = thinBorder
+  // Notes header
+  const notesHdr = ws.getCell(4, notesCol)
+  notesHdr.value = 'Notes'; notesHdr.font = f14b; notesHdr.fill = hdrFill; notesHdr.alignment = ctr; notesHdr.border = thinBorder
+  ws.getRow(4).height = 38
+
+  // Repeat headers on every printed page
+  ws.pageSetup.printTitlesRow = '1:4'
+
+  // ─── Player rows (3 rows each) ───
+  let row = 5
+  roster.forEach((p, pi) => {
+    const r1 = row, r2 = row + 1, r3 = row + 2
+    const greenFont = { ...f14, color:{ argb:'FF1E8449' } }
+    const greenFontB = { ...f14b, color:{ argb:'FF1E8449' } }
+    const redFont = { ...f14, color:{ argb:'FF922B21' } }
+    const redFontB = { ...f14b, color:{ argb:'FF922B21' } }
+
+    // Info columns — merge across 3 rows
+    const infoVals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '', '', '']
+    infoVals.forEach((val, ci) => {
+      ws.mergeCells(r1, ci+1, r3, ci+1)
+      const c = ws.getCell(r1, ci+1)
+      c.value = val
+      c.alignment = ci === 1 ? leftMid : ctr
+      c.border = thinBorder
+      if (ci === 0) c.font = { ...f14b, color:{ argb:'FF154733' } }
+      else if (ci === 1) c.font = f14b
+      else c.font = f14
+    })
+
+    // Row 1 tags: + label then positive tags (white bg)
+    const plusCell = ws.getCell(r1, 8)
+    plusCell.value = '＋'; plusCell.font = greenFontB; plusCell.fill = wFill; plusCell.alignment = ctr; plusCell.border = thinBorder
+    posTags.forEach((tag, ti) => {
+      const c = ws.getCell(r1, 9 + ti)
+      c.value = tag; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
+    })
+
+    // Row 2 tags: - label then negative tags (light red bg)
+    const minusCell = ws.getCell(r2, 8)
+    minusCell.value = '−'; minusCell.font = redFontB; minusCell.fill = rFill; minusCell.alignment = ctr; minusCell.border = thinBorder
+    negTags.forEach((tag, ti) => {
+      const c = ws.getCell(r2, 9 + ti)
+      c.value = tag; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
+    })
+
+    // Row 3 tags: extra positives then extra negatives
+    const epCell = ws.getCell(r3, 8)
+    epCell.value = '＋'; epCell.font = greenFontB; epCell.fill = wFill; epCell.alignment = ctr; epCell.border = thinBorder
+    extraPos.forEach((tag, ti) => {
+      const c = ws.getCell(r3, 9 + ti)
+      c.value = tag; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
+    })
+    const negStart = 9 + extraPos.length
+    const negLabel = ws.getCell(r3, negStart)
+    negLabel.value = '−'; negLabel.font = redFontB; negLabel.fill = rFill; negLabel.alignment = ctr; negLabel.border = thinBorder
+    extraNeg.forEach((tag, ti) => {
+      const c = ws.getCell(r3, negStart + 1 + ti)
+      c.value = tag; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
+    })
+    // Fill remaining cells in row 3
+    for (let ci = negStart + 1 + extraNeg.length; ci < notesCol; ci++) {
+      const c = ws.getCell(r3, ci)
+      c.fill = grayFill; c.border = thinBorder
+    }
+
+    // Notes column — merge across 3 rows
+    ws.mergeCells(r1, notesCol, r3, notesCol)
+    const nc = ws.getCell(r1, notesCol)
+    nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = thinBorder; nc.font = f14
+
+    // Row heights
+    ws.getRow(r1).height = 28
+    ws.getRow(r2).height = 24
+    ws.getRow(r3).height = 24
+
+    // Thick bottom border on row 3
+    for (let ci = 1; ci <= notesCol; ci++) {
+      const c = ws.getCell(r3, ci)
+      c.border = playerBottomBorder
+    }
+
+    row += 3
+  })
+
+  // ═══ SHEET 2: BY POSITION ═══
+  const ws2 = wb.addWorksheet('By Position')
+  let r2 = 1
   POS_LIST_GROUPS.forEach(g => {
-    const gPlayers = roster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
-    if (!gPlayers.length) return
-    posRows.push([g.label + ' (' + gPlayers.length + ')'])
-    posRows.push(['#', 'Name', 'Position', 'Year', 'Game', 'Intang.', 'Keep/Cut', 'Notes'])
-    gPlayers.forEach(p => posRows.push([p.pinnie_num, p.first_name + ' ' + p.last_name, p.pos1 + (p.pos2 ? ', ' + p.pos2 : ''), p.year, '', '', '', '']))
-    posRows.push([])
+    const gp = roster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
+    if (!gp.length) return
+    const hdrCell = ws2.getCell(r2, 1); hdrCell.value = g.label + ' (' + gp.length + ')'; hdrCell.font = f14b; r2++
+    ;['#','Name','Position','Year','Game','Intang.','K/C/?','Notes'].forEach((h, i) => {
+      const c = ws2.getCell(r2, i+1); c.value = h; c.font = f14b; c.fill = hdrFill; c.border = thinBorder; c.alignment = ctr
+    }); r2++
+    gp.forEach(p => {
+      const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '','','','']
+      vals.forEach((v, i) => { const c = ws2.getCell(r2, i+1); c.value = v; c.font = i===0?f14b:f14; c.border = thinBorder; c.alignment = i===1?leftMid:ctr })
+      r2++
+    })
+    r2++ // blank row between groups
   })
-  const ws2 = XLSX.utils.aoa_to_sheet(posRows)
-  ws2['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:8},{wch:8},{wch:10},{wch:36}]
-  XLSX.utils.book_append_sheet(wb, ws2, 'By Position')
+  ws2.getColumn(1).width = 6; ws2.getColumn(2).width = 28; ws2.getColumn(3).width = 18
+  ws2.getColumn(4).width = 7; ws2.getColumn(5).width = 10; ws2.getColumn(6).width = 10
+  ws2.getColumn(7).width = 10; ws2.getColumn(8).width = 36
 
-  // Sheet 3: Score Summary (populated from app data)
-  const sumRows = [['SCORE SUMMARY — DAY ' + currentDay], [],
-    ['#', 'Name', 'Position', 'Year', 'Avg Game', 'Avg Intang.', 'Avg Total', '# Evals', 'Tags', 'Notes']]
+  // ═══ SHEET 3: SCORE SUMMARY ═══
+  const ws3 = wb.addWorksheet('Score Summary')
+  ws3.mergeCells(1, 1, 1, 10)
+  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay; ws3.getCell(1,1).font = f14b
+  const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Intang.','Avg Total','# Evals','Tags','Notes']
+  sumHdrs.forEach((h,i) => { const c = ws3.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  let sr = 4
   roster.forEach(p => {
     const pS = scores.filter(s => s.player_id === p.id)
-    const g = pS.map(s=>s.game_ability).filter(v=>v!=null), it = pS.map(s=>s.intangibles).filter(v=>v!=null)
-    const aG = g.length?(g.reduce((a,b)=>a+b,0)/g.length).toFixed(1):'', aI = it.length?(it.reduce((a,b)=>a+b,0)/it.length).toFixed(1):''
+    const gm = pS.map(s=>s.game_ability).filter(v=>v!=null), it = pS.map(s=>s.intangibles).filter(v=>v!=null)
+    const aG = gm.length?(gm.reduce((a,b)=>a+b,0)/gm.length).toFixed(1):'', aI = it.length?(it.reduce((a,b)=>a+b,0)/it.length).toFixed(1):''
     const aT = aG&&aI?((parseFloat(aG)+parseFloat(aI))/2).toFixed(1):''
     const tags = [...new Set(pS.flatMap(s=>{try{return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[]}catch{return[]}}))].map(t=>{const i=POS_TAGS.find(pt=>pt.val===t);return i?i.label:t}).join(', ')
     const notes = pS.filter(s=>s.notes).map(s=>{const ev=evaluators.find(e=>e.id===s.evaluator_id);return(ev?.name||'?')+' (D'+s.day_number+'): '+s.notes}).join(' | ')
-    sumRows.push([p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, aG, aI, aT, g.length, tags, notes])
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, aG, aI, aT, gm.length, tags, notes]
+    vals.forEach((v,i) => { const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=i>=8?{...leftMid,wrapText:true}:ctr })
+    sr++
   })
-  const ws3 = XLSX.utils.aoa_to_sheet(sumRows)
-  ws3['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:10},{wch:10},{wch:10},{wch:8},{wch:40},{wch:60}]
-  ws3['!merges'] = [{s:{r:0,c:0},e:{r:0,c:9}}]
-  XLSX.utils.book_append_sheet(wb, ws3, 'Score Summary')
+  ;[6,28,18,7,10,10,10,8,40,60].forEach((w,i) => ws3.getColumn(i+1).width = w)
 
-  // Sheet 4: Phone List
-  const phoneRows = [['PHONE LIST — DAY ' + currentDay], [], ['#', 'Name', 'Phone', 'Position', 'Year']]
-  roster.forEach(p => phoneRows.push([p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]))
-  const ws4 = XLSX.utils.aoa_to_sheet(phoneRows)
-  ws4['!cols'] = [{wch:5},{wch:24},{wch:16},{wch:18},{wch:7}]
-  ws4['!merges'] = [{s:{r:0,c:0},e:{r:0,c:4}}]
-  XLSX.utils.book_append_sheet(wb, ws4, 'Phone List')
+  // ═══ SHEET 4: PHONE LIST ═══
+  const ws4 = wb.addWorksheet('Phone List')
+  ws4.mergeCells(1,1,1,5)
+  ws4.getCell(1,1).value = 'PHONE LIST — DAY '+currentDay; ws4.getCell(1,1).font = f14b
+  ;['#','Name','Phone','Position','Year'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  let pr = 4
+  roster.forEach(p => {
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]
+    vals.forEach((v,i) => { const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=ctr })
+    pr++
+  })
+  ;[6,28,18,18,7].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
-  XLSX.writeFile(wb, 'Oregon_Tryouts_Day_' + currentDay + '.xlsx')
+  // ═══ SAVE ═══
+  const buffer = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = 'Oregon_Tryouts_Day_'+currentDay+'.xlsx'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 // ── EVALUATION TAGS ──
