@@ -652,9 +652,12 @@ Skip blank rows. Most players will have FEW or ZERO tags — that is normal.` }
       if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error))
       const text = data.content?.map(c => c.text || '').join('') || ''
 
-      // Parse JSON — handle possible markdown fences
-      const clean = text.replace(/```json|```/g, '').trim()
-      const parsed = JSON.parse(clean)
+      // Extract JSON array — Claude sometimes adds preamble text
+      const arrayStart = text.indexOf('[')
+      const arrayEnd = text.lastIndexOf(']')
+      if (arrayStart === -1 || arrayEnd === -1) throw new Error('No valid data found in response. Raw: ' + text.slice(0, 200))
+      const jsonStr = text.slice(arrayStart, arrayEnd + 1)
+      const parsed = JSON.parse(jsonStr)
 
       // Match to known players
       const matched = parsed.map(entry => {
