@@ -38,8 +38,7 @@ const POS_LIST_GROUPS = [
 ]
 
 // ── EXCEL EXPORT ──
-async function exportRosterToExcel(players, scores, evaluators, currentDay) {
-  // Dynamically load SheetJS
+async function exportRosterToExcel(players, scores, evaluators, currentDay, checkins) {
   if (!window.XLSX) {
     await new Promise((resolve, reject) => {
       const script = document.createElement('script')
@@ -50,63 +49,71 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay) {
   }
   const XLSX = window.XLSX
   const wb = XLSX.utils.book_new()
+  const active = players.filter(p => p.status === 'active').sort((a,b) => a.pinnie_num - b.pinnie_num)
+  const checkedIn = active.filter(p => (checkins||[]).find(c => c.player_id === p.id && c.day_number === currentDay && c.checked_in))
+  const roster = checkedIn.length > 0 ? checkedIn : active
 
-  // Sheet 1: Evaluation sheet matching original format
-  const evalRows = [['#', 'First Name', 'Last Name', 'Position (primary, secondary)', 'Year', 'Other identifiers', 'Game Ability', 'Intangibles', 'Notes', 'Recommendation']]
-  players.filter(p=>p.status==='active').sort((a,b)=>a.pinnie_num-b.pinnie_num).forEach(p => {
-    evalRows.push([p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year, '', '', '', '', ''])
+  // Sheet 1: Blank Evaluation Sheet (print 5 copies — one per evaluator)
+  const evalRows = [
+    ['OREGON CLUB SOCCER — TRYOUT EVALUATION — DAY ' + currentDay, '', '', '', '', '', '', ''],
+    ['Evaluator Name: _______________________', '', '', '', '', '', '', ''],
+    [],
+    ['#', 'Name', 'Position', 'Year', 'Game Ability (1-10)', 'Intangibles (1-10)', 'Keep / Cut / ?', 'Notes']
+  ]
+  roster.forEach(p => {
+    evalRows.push([p.pinnie_num, p.first_name + ' ' + p.last_name, p.pos1 + (p.pos2 ? ', ' + p.pos2 : ''), p.year, '', '', '', ''])
   })
+  evalRows.push([], ['QUICK REFERENCE — Tags to write in Notes column:'])
+  evalRows.push(['STRENGTHS:', 'Great first touch', 'Quick speed of play', 'Smart decisions', 'Accurate passer', 'Strong off-ball', 'Wins 1v1s', 'High work rate'])
+  evalRows.push(['', 'Vocal/communicates', 'Composed', 'Great positioning', 'Makes others better', 'Athletic/fast', 'Tracks back', 'Good soccer brain'])
+  evalRows.push(['', 'Creative in attack', 'Strong defender', 'Coachable', 'Leader', 'Wins aerials', '', ''])
+  evalRows.push(['WEAKNESSES:', 'Poor first touch', 'Slow speed of play', 'Poor decisions', 'Poor passing', 'Ball watches', 'Avoids 1v1s', 'Low work rate'])
+  evalRows.push(['', "Doesn't communicate", 'Loses composure', 'Poor positioning', 'No impact', 'Lacks athleticism', "Doesn't track back", 'Slow to read game'])
   const ws1 = XLSX.utils.aoa_to_sheet(evalRows)
-  ws1['!cols'] = [{wch:5},{wch:14},{wch:18},{wch:30},{wch:8},{wch:18},{wch:14},{wch:14},{wch:30},{wch:18}]
+  ws1['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:16},{wch:16},{wch:14},{wch:40}]
+  ws1['!merges'] = [{s:{r:0,c:0},e:{r:0,c:7}}, {s:{r:1,c:0},e:{r:1,c:4}}]
   XLSX.utils.book_append_sheet(wb, ws1, 'Evaluation Sheet')
 
-  // Sheet 2: By Position (like original spreadsheet)
-  const posGroups = POS_LIST_GROUPS.map(g => ({
-    label: g.label,
-    players: players.filter(p => p.status==='active' && g.match(p)).sort((a,b) => a.pinnie_num-b.pinnie_num)
-  }))
-  const maxLen = Math.max(...posGroups.map(g => g.players.length)) + 1
+  // Sheet 2: By Position (grouped vertically, one group after another)
   const posRows = []
-  // Header row
-  const headerRow = []
-  posGroups.forEach((g, gi) => {
-    if (gi > 0) headerRow.push('') // spacer
-    headerRow.push(g.label, '', '', '', '')
+  POS_LIST_GROUPS.forEach(g => {
+    const gPlayers = roster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
+    if (!gPlayers.length) return
+    posRows.push([g.label + ' (' + gPlayers.length + ')'])
+    posRows.push(['#', 'Name', 'Position', 'Year', 'Game', 'Intang.', 'Keep/Cut', 'Notes'])
+    gPlayers.forEach(p => posRows.push([p.pinnie_num, p.first_name + ' ' + p.last_name, p.pos1 + (p.pos2 ? ', ' + p.pos2 : ''), p.year, '', '', '', '']))
+    posRows.push([])
   })
-  posRows.push(headerRow)
-  // Data rows
-  for (let i = 0; i < maxLen; i++) {
-    const row = []
-    posGroups.forEach((g, gi) => {
-      if (gi > 0) row.push('')
-      const p = g.players[i]
-      if (p) { row.push(p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year) }
-      else { row.push('','','','','') }
-    })
-    posRows.push(row)
-  }
   const ws2 = XLSX.utils.aoa_to_sheet(posRows)
+  ws2['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:8},{wch:8},{wch:10},{wch:36}]
   XLSX.utils.book_append_sheet(wb, ws2, 'By Position')
 
-  // Sheet 3: Scores Summary (if scores exist)
-  const scoreRows = [['#', 'First Name', 'Last Name', 'Position', 'Year', 'Avg Game', 'Avg Intangibles', 'Avg Total', '# Evals', 'Tags', 'Notes']]
-  players.filter(p=>p.status==='active').sort((a,b)=>a.pinnie_num-b.pinnie_num).forEach(p => {
-    const pScores = scores.filter(s => s.player_id === p.id)
-    const games = pScores.map(s=>s.game_ability).filter(v=>v!=null)
-    const ints = pScores.map(s=>s.intangibles).filter(v=>v!=null)
-    const avgG = games.length ? (games.reduce((a,b)=>a+b,0)/games.length).toFixed(1) : ''
-    const avgI = ints.length ? (ints.reduce((a,b)=>a+b,0)/ints.length).toFixed(1) : ''
-    const avgT = avgG && avgI ? ((parseFloat(avgG)+parseFloat(avgI))/2).toFixed(1) : ''
-    const allTags = pScores.flatMap(s => { try { return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[] } catch{return[]} })
-    const tagLabels = [...new Set(allTags)].map(t => { const info = POS_TAGS.find(pt=>pt.val===t); return info?info.label:t }).join(', ')
-    const notes = pScores.filter(s=>s.notes).map(s => { const ev = evaluators.find(e=>e.id===s.evaluator_id); return (ev?.name||'?')+' (D'+s.day_number+'): '+s.notes }).join(' | ')
-    scoreRows.push([p.pinnie_num, p.first_name, p.last_name, p.pos1+(p.pos2?','+p.pos2:''), p.year, avgG, avgI, avgT, games.length, tagLabels, notes])
+  // Sheet 3: Score Summary (populated from app data)
+  const sumRows = [['SCORE SUMMARY — DAY ' + currentDay], [],
+    ['#', 'Name', 'Position', 'Year', 'Avg Game', 'Avg Intang.', 'Avg Total', '# Evals', 'Tags', 'Notes']]
+  roster.forEach(p => {
+    const pS = scores.filter(s => s.player_id === p.id)
+    const g = pS.map(s=>s.game_ability).filter(v=>v!=null), it = pS.map(s=>s.intangibles).filter(v=>v!=null)
+    const aG = g.length?(g.reduce((a,b)=>a+b,0)/g.length).toFixed(1):'', aI = it.length?(it.reduce((a,b)=>a+b,0)/it.length).toFixed(1):''
+    const aT = aG&&aI?((parseFloat(aG)+parseFloat(aI))/2).toFixed(1):''
+    const tags = [...new Set(pS.flatMap(s=>{try{return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[]}catch{return[]}}))].map(t=>{const i=POS_TAGS.find(pt=>pt.val===t);return i?i.label:t}).join(', ')
+    const notes = pS.filter(s=>s.notes).map(s=>{const ev=evaluators.find(e=>e.id===s.evaluator_id);return(ev?.name||'?')+' (D'+s.day_number+'): '+s.notes}).join(' | ')
+    sumRows.push([p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, aG, aI, aT, g.length, tags, notes])
   })
-  const ws3 = XLSX.utils.aoa_to_sheet(scoreRows)
-  ws3['!cols'] = [{wch:5},{wch:14},{wch:18},{wch:20},{wch:8},{wch:10},{wch:14},{wch:10},{wch:8},{wch:40},{wch:60}]
-  XLSX.utils.book_append_sheet(wb, ws3, 'Scores Summary')
+  const ws3 = XLSX.utils.aoa_to_sheet(sumRows)
+  ws3['!cols'] = [{wch:5},{wch:24},{wch:18},{wch:7},{wch:10},{wch:10},{wch:10},{wch:8},{wch:40},{wch:60}]
+  ws3['!merges'] = [{s:{r:0,c:0},e:{r:0,c:9}}]
+  XLSX.utils.book_append_sheet(wb, ws3, 'Score Summary')
 
-  XLSX.writeFile(wb, 'Oregon_Tryouts_Day_'+currentDay+'.xlsx')
+  // Sheet 4: Phone List
+  const phoneRows = [['PHONE LIST — DAY ' + currentDay], [], ['#', 'Name', 'Phone', 'Position', 'Year']]
+  roster.forEach(p => phoneRows.push([p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]))
+  const ws4 = XLSX.utils.aoa_to_sheet(phoneRows)
+  ws4['!cols'] = [{wch:5},{wch:24},{wch:16},{wch:18},{wch:7}]
+  ws4['!merges'] = [{s:{r:0,c:0},e:{r:0,c:4}}]
+  XLSX.utils.book_append_sheet(wb, ws4, 'Phone List')
+
+  XLSX.writeFile(wb, 'Oregon_Tryouts_Day_' + currentDay + '.xlsx')
 }
 
 // ── EVALUATION TAGS ──
@@ -730,7 +737,16 @@ function EvalView({ evaluator, onLogout }) {
       {/* ══ ROSTER TAB ══ */}
       {view === 'roster' && (
         <div style={{ padding:16 }}>
-          <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:8 }}>Day {currentDay} Check-In — tap to toggle</div>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+            <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Check-In — tap to toggle</div>
+            {activePlayers.length > 0 && (
+              <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins)} style={{
+                padding:'6px 14px', borderRadius:8, border:'none', background:Y, color:G,
+                fontSize:12, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer',
+                display:'flex', alignItems:'center', gap:4,
+              }}>📥 EXPORT FOR PRINT</button>
+            )}
+          </div>
           {activePlayers.length===0 ? emptyState('📋','No players checked in yet.') : (
             <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
               {activePlayers.map(p => {
@@ -988,7 +1004,7 @@ function EvalView({ evaluator, onLogout }) {
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
             <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Export</div>
             <div style={{ color:'#64748b', fontSize:12, marginBottom:12 }}>Download a printable Excel file with evaluation sheet, position groups, and score summaries.</div>
-            <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay)} style={{ padding:'10px 20px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
+            <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins)} style={{ padding:'10px 20px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
               📥 EXPORT TO EXCEL
             </button>
           </div>
