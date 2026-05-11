@@ -83,16 +83,16 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     properties: { defaultRowHeight: 20 }
   })
 
-  // Column widths
-  ws.getColumn(1).width = 6    // #
-  ws.getColumn(2).width = 28   // Name
-  ws.getColumn(3).width = 16   // Pos
-  ws.getColumn(4).width = 7    // Year
-  ws.getColumn(5).width = 10   // Game
-  ws.getColumn(6).width = 10   // Intang
-  ws.getColumn(7).width = 8    // K/C
-  for (let i = 8; i < 8 + numTagCols; i++) ws.getColumn(i).width = 14
-  ws.getColumn(notesCol).width = 34
+  // Column widths (ExcelJS units are slightly narrower than openpyxl)
+  ws.getColumn(1).width = 8     // #
+  ws.getColumn(2).width = 35    // Name
+  ws.getColumn(3).width = 20    // Pos
+  ws.getColumn(4).width = 10    // Year
+  ws.getColumn(5).width = 13    // Game
+  ws.getColumn(6).width = 13    // Intang
+  ws.getColumn(7).width = 10    // K/C
+  for (let i = 8; i < 8 + numTagCols; i++) ws.getColumn(i).width = 17
+  ws.getColumn(notesCol).width = 40
 
   // Row 1: Title
   ws.mergeCells(1, 1, 1, notesCol)
@@ -142,12 +142,13 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
     // Info columns — merge across 3 rows
     const infoVals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '', '', '']
+    const mergedInfoBorder = { top:thin, bottom:thickB, left:thin, right:thin }
     infoVals.forEach((val, ci) => {
       ws.mergeCells(r1, ci+1, r3, ci+1)
       const c = ws.getCell(r1, ci+1)
       c.value = val
       c.alignment = ci === 1 ? leftMid : ctr
-      c.border = thinBorder
+      c.border = mergedInfoBorder
       if (ci === 0) c.font = { ...f14b, color:{ argb:'FF154733' } }
       else if (ci === 1) c.font = f14b
       else c.font = f14
@@ -192,15 +193,15 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     // Notes column — merge across 3 rows
     ws.mergeCells(r1, notesCol, r3, notesCol)
     const nc = ws.getCell(r1, notesCol)
-    nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = thinBorder; nc.font = f14
+    nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = { top:thin, bottom:thickB, left:thin, right:thin }; nc.font = f14
 
     // Row heights
     ws.getRow(r1).height = 28
     ws.getRow(r2).height = 24
     ws.getRow(r3).height = 24
 
-    // Thick bottom border on row 3
-    for (let ci = 1; ci <= notesCol; ci++) {
+    // Thick bottom border on row 3 — tag cells only (info + notes already handled via merge)
+    for (let ci = 8; ci < notesCol; ci++) {
       const c = ws.getCell(r3, ci)
       c.border = playerBottomBorder
     }
@@ -225,9 +226,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     })
     r2++ // blank row between groups
   })
-  ws2.getColumn(1).width = 6; ws2.getColumn(2).width = 28; ws2.getColumn(3).width = 18
-  ws2.getColumn(4).width = 7; ws2.getColumn(5).width = 10; ws2.getColumn(6).width = 10
-  ws2.getColumn(7).width = 10; ws2.getColumn(8).width = 36
+  ws2.getColumn(1).width = 8; ws2.getColumn(2).width = 35; ws2.getColumn(3).width = 22
+  ws2.getColumn(4).width = 10; ws2.getColumn(5).width = 13; ws2.getColumn(6).width = 13
+  ws2.getColumn(7).width = 12; ws2.getColumn(8).width = 40
 
   // ═══ SHEET 3: SCORE SUMMARY ═══
   const ws3 = wb.addWorksheet('Score Summary')
@@ -247,7 +248,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     vals.forEach((v,i) => { const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=i>=8?{...leftMid,wrapText:true}:ctr })
     sr++
   })
-  ;[6,28,18,7,10,10,10,8,40,60].forEach((w,i) => ws3.getColumn(i+1).width = w)
+  ;[8,35,22,10,13,13,13,10,50,70].forEach((w,i) => ws3.getColumn(i+1).width = w)
 
   // ═══ SHEET 4: PHONE LIST ═══
   const ws4 = wb.addWorksheet('Phone List')
@@ -260,7 +261,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     vals.forEach((v,i) => { const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=ctr })
     pr++
   })
-  ;[6,28,18,18,7].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ;[8,35,22,22,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   const buffer = await wb.xlsx.writeBuffer()
