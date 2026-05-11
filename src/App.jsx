@@ -142,7 +142,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
     // Info columns — merge across 3 rows
     const infoVals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '', '', '']
-    const mergedInfoBorder = { top:thin, bottom:thickB, left:thin, right:thin }
+    const mergedInfoBorder = { top:thin, bottom:thin, left:thin, right:thin }
     infoVals.forEach((val, ci) => {
       ws.mergeCells(r1, ci+1, r3, ci+1)
       const c = ws.getCell(r1, ci+1)
@@ -193,7 +193,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     // Notes column — merge across 3 rows
     ws.mergeCells(r1, notesCol, r3, notesCol)
     const nc = ws.getCell(r1, notesCol)
-    nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = { top:thin, bottom:thickB, left:thin, right:thin }; nc.font = f14
+    nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = thinBorder; nc.font = f14
 
     // Row heights
     ws.getRow(r1).height = 28
