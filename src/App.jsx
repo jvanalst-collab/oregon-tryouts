@@ -612,34 +612,35 @@ function UploadEvalTab({ evaluators, players, currentDay, onSaved }) {
             role: 'user',
             content: [
               imageContent,
-              { type: 'text', text: `You are reading a scanned soccer tryout evaluation sheet. Extract the evaluation data for each player.
+              { type: 'text', text: `You are reading a scanned paper soccer tryout evaluation sheet. Extract evaluation data for each player.
 
-The sheet has this layout per player (3 rows per player):
-- Row 1: Pinnie # | Name | Position | Year | Game Ability score (1-10, handwritten) | Intangibles score (1-10, handwritten) | K/C/? (Keep/Cut/?) | Then positive tags (green text, white background) that may be circled/marked/checked
-- Row 2: Same player continued — negative tags (red text, light pink background) that may be circled/marked/checked  
-- Row 3: Same player continued — extra positive then extra negative tags
+CRITICAL RULE ABOUT TAGS: Every player row has the SAME tags pre-printed on the sheet. These are NOT selected by default. A tag is ONLY selected if the evaluator physically drew on it — a circle around it, a check mark on it, an X on it, an underline beneath it, a highlighter mark, or any handwritten mark touching that specific tag cell. The vast majority of tags for each player will be UNMARKED (just clean printed text) — do NOT include those. If you are unsure whether a tag is marked, do NOT include it. Only include tags where there is a CLEAR visible mark.
 
-A tag is "selected" if it has ANY mark on it — circle, check mark, X, underline, highlight, or any handwritten mark near it. Unmarked/clean tags are NOT selected.
+LAYOUT: Each player has 3 rows of tag cells. Row 1 has a "+" label followed by: 1st Touch, Speed, Decisions, Passing, Off-ball, 1v1, Work Rate, Vocal, Composed, Positioning, Elevates, Athletic, Soccer IQ. Row 2 has a "−" label followed by the same categories but as weaknesses (1st Touch, Speed, Decisions, Passing, Static, 1v1, Work Rate, Quiet, Composure, Positioning, No Impact, Unathletic, Slow Read). Row 3 has extra tags.
 
-The handwritten K/C/? column may contain: K or ✓ (keep), C or ✗ (cut), or ? (undecided).
+SCORES: The Game Ability and Intangibles columns contain handwritten numbers 1-10. Read them carefully. If blank or unreadable, use null.
 
-Known players in the system:
+K/C/? COLUMN: May contain K or ✓ (= "keep"), C or ✗ (= "cut"), or ? (= undecided). If blank, use null.
+
+NOTES: A wide column on the right. Read any handwriting there.
+
+Known players:
 ${playerList}
 
-Known tag values:
+Tag value mappings (use these exact strings):
 ${tagList}
 
-Respond with ONLY a JSON array, no other text, no markdown backticks. Each element:
+Respond with ONLY a JSON array. No other text, no markdown. Each element:
 {
   "pinnie_num": <number>,
-  "game_ability": <number 1-10 or null if blank/unreadable>,
-  "intangibles": <number 1-10 or null if blank/unreadable>,
+  "game_ability": <number 1-10 or null>,
+  "intangibles": <number 1-10 or null>,
   "recommendation": <"keep" or "cut" or null>,
-  "tags": [<array of tag val strings like "+first_touch", "-passing", etc>],
-  "notes": "<any handwritten notes, or empty string>"
+  "tags": [<ONLY tags with visible marks — expect 0-5 tags per player, NOT 10+>],
+  "notes": "<handwritten notes or empty string>"
 }
 
-Only include players where you can read at least the pinnie number. Skip completely blank rows.` }
+Skip blank rows. Most players will have FEW or ZERO tags — that is normal.` }
             ]
           }]
         })
