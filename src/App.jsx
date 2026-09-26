@@ -66,7 +66,11 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     neg: GK_TAGS.filter(t => t.group === g && !t.pos),
   }))
 
-  const TAGS_PER_ROW = 7          // 4 positive + 3 negative
+  // Widest group across both tag sets, so no row can ever overflow into Notes.
+  const TAGS_PER_ROW = Math.max(
+    ...outfieldRows.map(r => r.pos.length + r.neg.length),
+    ...gkRows.map(r => r.pos.length + r.neg.length),
+  )
   const numTagCols = TAGS_PER_ROW + 1 // +1 for the group label column
   const notesCol = 7 + numTagCols + 1
 
@@ -292,18 +296,15 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 // predictor of playing level, while speed/agility show little or no
 // correlation — so raw athleticism is folded into "Wins Duels" rather than
 // given its own prominent tag where it would anchor the evaluator's eye.
-// Each group holds exactly 4 positives then 3 negatives (the printed sheet
-// lays each group out as one 7-column row).
+// Group sizes are uneven by design (READS 4, EXECUTES 5, COMPETES 5); the
+// printed sheet lays each group out as one row and pads any short row.
 const TAG_GROUPS = ['READS', 'EXECUTES', 'COMPETES']
 const GK_TAG_GROUPS = ['HANDLING', 'SHOT STOP', 'SWEEP / DIST']
 
 const POS_TAGS = [
   // READS — game intelligence
-  { label: 'Scans before receiving', short: 'Scans',       val: '+scans',        pos: true,  group: 'READS' },
   { label: 'Smart decisions',        short: 'Decisions',   val: '+decisions',    pos: true,  group: 'READS' },
   { label: 'Great positioning',      short: 'Position',    val: '+positioning',  pos: true,  group: 'READS' },
-  { label: 'Strong off-ball movement', short: 'Off-ball',  val: '+off_ball',     pos: true,  group: 'READS' },
-  { label: 'Slow to read the game',  short: 'Slow Read',   val: '-soccer_iq',    pos: false, group: 'READS' },
   { label: 'Ball watches / static',  short: 'Static',      val: '-off_ball',     pos: false, group: 'READS' },
   { label: 'Out of position',        short: 'Out of Pos',  val: '-positioning',  pos: false, group: 'READS' },
 
@@ -311,18 +312,14 @@ const POS_TAGS = [
   { label: 'Great first touch',      short: '1st Touch',   val: '+first_touch',  pos: true,  group: 'EXECUTES' },
   { label: 'Accurate passer',        short: 'Passing',     val: '+passing',      pos: true,  group: 'EXECUTES' },
   { label: 'Wins 1v1s',              short: '1v1',         val: '+1v1',          pos: true,  group: 'EXECUTES' },
-  { label: 'Creative in attack',     short: 'Creative',    val: '+creative',     pos: true,  group: 'EXECUTES' },
   { label: 'Heavy first touch',      short: 'Heavy 1st',   val: '-first_touch',  pos: false, group: 'EXECUTES' },
   { label: 'Gives the ball away',    short: 'Loses Ball',  val: '-passing',      pos: false, group: 'EXECUTES' },
-  { label: 'Panics under pressure',  short: 'Panics',      val: '-composure',    pos: false, group: 'EXECUTES' },
 
   // COMPETES — physical, psychological and social
   { label: 'High work rate',         short: 'Work Rate',   val: '+work_rate',    pos: true,  group: 'COMPETES' },
-  { label: 'Wins duels',             short: 'Wins Duels',  val: '+duels',        pos: true,  group: 'COMPETES' },
   { label: 'Coachable / listens',    short: 'Coachable',   val: '+coachable',    pos: true,  group: 'COMPETES' },
   { label: 'Leads / organizes',      short: 'Leader',      val: '+leader',       pos: true,  group: 'COMPETES' },
   { label: 'Doesn\'t track back',    short: 'No Track',    val: '-tracks_back',  pos: false, group: 'COMPETES' },
-  { label: 'Hides / no impact',      short: 'Hides',       val: '-impact',       pos: false, group: 'COMPETES' },
   { label: 'Poor body language',     short: 'Body Lang',   val: '-body_language',pos: false, group: 'COMPETES' },
 ]
 
@@ -332,26 +329,20 @@ const GK_TAGS = [
   { label: 'Catches cleanly',        short: 'Catches',     val: 'gk+catches',    pos: true,  group: 'HANDLING' },
   { label: 'Commands crosses',       short: 'Crosses',     val: 'gk+crosses',    pos: true,  group: 'HANDLING' },
   { label: 'Punches decisively',     short: 'Punches',     val: 'gk+punches',    pos: true,  group: 'HANDLING' },
-  { label: 'Secure hands',           short: 'Secure',      val: 'gk+secure',     pos: true,  group: 'HANDLING' },
   { label: 'Spills / parries poorly',short: 'Spills',      val: 'gk-spills',     pos: false, group: 'HANDLING' },
   { label: 'Late off the line',      short: 'Late',        val: 'gk-late',       pos: false, group: 'HANDLING' },
-  { label: 'Flaps at crosses',       short: 'Flaps',       val: 'gk-flaps',      pos: false, group: 'HANDLING' },
 
   { label: 'Sharp reactions',        short: 'Reactions',   val: 'gk+reactions',  pos: true,  group: 'SHOT STOP' },
-  { label: 'Sets feet early',        short: 'Set Early',   val: 'gk+set',        pos: true,  group: 'SHOT STOP' },
   { label: 'Strong in 1v1s',         short: '1v1s',        val: 'gk+1v1',        pos: true,  group: 'SHOT STOP' },
   { label: 'Good angles',            short: 'Angles',      val: 'gk+angles',     pos: true,  group: 'SHOT STOP' },
   { label: 'Slow to set',            short: 'Slow Set',    val: 'gk-slowset',    pos: false, group: 'SHOT STOP' },
-  { label: 'Beaten at near post',    short: 'Near Post',   val: 'gk-nearpost',   pos: false, group: 'SHOT STOP' },
   { label: 'Weak to his weak side',  short: 'Weak Side',   val: 'gk-weakside',   pos: false, group: 'SHOT STOP' },
 
-  { label: 'Comfortable with feet',  short: 'Feet',        val: 'gk+feet',       pos: true,  group: 'SWEEP / DIST' },
   { label: 'Accurate distribution',  short: 'Distrib',     val: 'gk+dist',       pos: true,  group: 'SWEEP / DIST' },
   { label: 'Organizes the back line',short: 'Organizes',   val: 'gk+organizes',  pos: true,  group: 'SWEEP / DIST' },
   { label: 'Sweeps behind the line', short: 'Sweeps',      val: 'gk+sweeps',     pos: true,  group: 'SWEEP / DIST' },
   { label: 'Sloppy with feet',       short: 'Sloppy Ft',   val: 'gk-sloppyfeet', pos: false, group: 'SWEEP / DIST' },
   { label: 'Stays on his line',      short: 'Stays Line',  val: 'gk-staysline',  pos: false, group: 'SWEEP / DIST' },
-  { label: 'Doesn\'t organize',      short: 'No Org',      val: 'gk-noorg',      pos: false, group: 'SWEEP / DIST' },
 ]
 
 const ALL_TAGS = [...POS_TAGS, ...GK_TAGS]
