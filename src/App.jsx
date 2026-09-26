@@ -1052,7 +1052,9 @@ function EvalView({ evaluator, onLogout }) {
   const [expandedPlayer, setExpandedPlayer] = useState(null)
   const [expandedDash, setExpandedDash] = useState(null)
   const [showCutPlayers, setShowCutPlayers] = useState(false)
-  const [showDemo, setShowDemo] = useState(true)
+  // Off by default — live tryout data only. Toggle on from the header when
+  // demoing the app or training evaluators.
+  const [showDemo, setShowDemo] = useState(false)
   const isCoach = evaluator.role === 'coach'
 
   // ── DATA LOADING ──
@@ -1257,10 +1259,15 @@ function EvalView({ evaluator, onLogout }) {
             <div style={{ fontSize:16, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>TRYOUT HQ</div>
             <div style={{ fontSize:11, color:'#ffffffaa' }}>{evaluator.name}</div>
           </div>
-          {showDemo && (
-            <button onClick={()=>{if(confirm('Hide demo players? They won\'t come back unless you reload the page.')) setShowDemo(false)}}
-              style={{ padding:'3px 8px', borderRadius:6, border:'1px solid #ffffff30', background:'#ffffff15', color:'#fbbf24', fontSize:10, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }}>
-              DEMO ON ✕
+          {isCoach && (
+            <button
+              onClick={()=>{
+                if (showDemo) setShowDemo(false)
+                else if (confirm('Show 25 demo players? They are display-only and are never saved to the database — but they will appear in the roster, the scores and any Excel export until you switch this back off.')) setShowDemo(true)
+              }}
+              title={showDemo ? 'Demo players are showing — click to hide' : 'Show demo players for training or a walkthrough'}
+              style={{ padding:'3px 8px', borderRadius:6, border:'1px solid '+(showDemo?'#fbbf2460':'#ffffff30'), background:showDemo?'#fbbf2420':'#ffffff10', color:showDemo?'#fbbf24':'#ffffff80', fontSize:10, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap' }}>
+              {showDemo ? 'DEMO ON ✕' : 'DEMO OFF'}
             </button>
           )}
           <DayNav />
