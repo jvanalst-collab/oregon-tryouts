@@ -53,11 +53,21 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const checkedIn = active.filter(p => (checkins||[]).find(c => c.player_id === p.id && c.day_number === currentDay && c.checked_in))
   const roster = checkedIn.length > 0 ? checkedIn : active
 
-  const posTags = ['1st Touch','Speed','Decisions','Passing','Off-ball','1v1','Work Rate','Vocal','Composed','Positioning','Elevates','Athletic','Soccer IQ']
-  const negTags = ['1st Touch','Speed','Decisions','Passing','Static','1v1','Work Rate','Quiet','Composure','Positioning','No Impact','Unathletic','Slow Read']
-  const extraPos = ['Creative','Defending','Coachable','Leader','Aerial','Tracks Back']
-  const extraNeg = ['Won\'t Track','No Impact','Slow Read']
-  const numTagCols = posTags.length + 1 // +1 for the +/- label column
+  // Each group prints as one row: a label cell, then 4 positives and 3 negatives.
+  const groupRows = src => TAG_GROUPS.map(g => ({
+    group: g,
+    pos: src.filter(t => t.group === g && t.pos),
+    neg: src.filter(t => t.group === g && !t.pos),
+  }))
+  const outfieldRows = groupRows(POS_TAGS)
+  const gkRows = GK_TAG_GROUPS.map(g => ({
+    group: g,
+    pos: GK_TAGS.filter(t => t.group === g && t.pos),
+    neg: GK_TAGS.filter(t => t.group === g && !t.pos),
+  }))
+
+  const TAGS_PER_ROW = 7          // 4 positive + 3 negative
+  const numTagCols = TAGS_PER_ROW + 1 // +1 for the group label column
   const notesCol = 7 + numTagCols + 1
 
   const thin = { style:'thin', color:{ argb:'FFBFBFBF' } }
@@ -81,17 +91,26 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ws.pageSetup.orientation = 'landscape'
   ws.pageSetup.paperSize = 1
   ws.pageSetup.margins = { left:0.25, right:0.25, top:0.3, bottom:0.3, header:0.1, footer:0.1 }
+  // Fit the WIDTH to one page but let rows flow down as many pages as needed.
+  // fitToHeight = 1 would cram every player onto a single page and shrink the
+  // text to the point of being unreadable — that is the bug this replaces.
+  ws.pageSetup.fitToPage = true
+  ws.pageSetup.fitToWidth = 1
+  ws.pageSetup.fitToHeight = 0
+  // Repeat the header row on every printed page.
+  ws.pageSetup.printTitlesRow = '5:5'
 
   // Column widths (ExcelJS units are slightly narrower than openpyxl)
-  ws.getColumn(1).width = 8     // #
-  ws.getColumn(2).width = 35    // Name
-  ws.getColumn(3).width = 20    // Pos
-  ws.getColumn(4).width = 10    // Year
-  ws.getColumn(5).width = 13    // Game
-  ws.getColumn(6).width = 13    // Intang
-  ws.getColumn(7).width = 10    // K/C
-  for (let i = 8; i < 8 + numTagCols; i++) ws.getColumn(i).width = 17
-  ws.getColumn(notesCol).width = 40
+  ws.getColumn(1).width = 6     // #
+  ws.getColumn(2).width = 20    // Name
+  ws.getColumn(3).width = 15    // Pos
+  ws.getColumn(4).width = 8     // Year
+  ws.getColumn(5).width = 9     // Game
+  ws.getColumn(6).width = 14    // Compete
+  ws.getColumn(7).width = 8     // K/C
+  ws.getColumn(8).width = 14    // Group label
+  for (let i = 9; i < 8 + numTagCols; i++) ws.getColumn(i).width = 13
+  ws.getColumn(notesCol).width = 18
 
   // Row 1: Title
   ws.mergeCells(1, 1, 1, notesCol)
@@ -109,32 +128,44 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ws.getCell(2, 1).alignment = leftMid
   ws.getRow(2).height = 30
 
-  // Row 3: spacer
-  ws.getRow(3).height = 6
+  // Row 3: Scale anchors — without these, one evaluator's 7 is not another's 7.
+  ws.mergeCells(3, 1, 3, notesCol)
+  const anchorCell = ws.getCell(3, 1)
+  anchorCell.value =
+    'GAME = reads + technical execution   ·   COMPETE = work rate, duels, coachability, response to mistakes\n' +
+    '9-10 clear keep   ·   7-8 likely keep   ·   5-6 borderline, look again   ·   3-4 likely cut   ·   1-2 clear cut'
+  anchorCell.font = { name:'Arial', size:11 }
+  anchorCell.fill = grayFill
+  anchorCell.alignment = { horizontal:'center', vertical:'middle', wrapText:true }
+  anchorCell.border = thinBorder
+  ws.getRow(3).height = 32
 
-  // Row 4: Column headers
-  const hdrs = ['#','Name','Pos','Yr','Game\n(1-10)','Intang\n(1-10)','K/C/?']
+  // Row 4: spacer
+  ws.getRow(4).height = 6
+
+  // Row 5: Column headers
+  const hdrs = ['#','Name','Pos','Yr','GAME\n(1-10)','COMPETE\n(1-10)','K/C/?']
   hdrs.forEach((h, i) => {
-    const c = ws.getCell(4, i + 1)
+    const c = ws.getCell(5, i + 1)
     c.value = h; c.font = f14b; c.fill = hdrFill; c.alignment = ctrWrap; c.border = thinBorder
   })
   // Tag header merged
-  ws.mergeCells(4, 8, 4, 7 + numTagCols)
-  const tagHdr = ws.getCell(4, 8)
+  ws.mergeCells(5, 8, 5, 7 + numTagCols)
+  const tagHdr = ws.getCell(5, 8)
   tagHdr.value = 'CIRCLE APPLICABLE TAGS'; tagHdr.font = f14b; tagHdr.fill = hdrFill; tagHdr.alignment = ctr; tagHdr.border = thinBorder
   // Notes header
-  const notesHdr = ws.getCell(4, notesCol)
+  const notesHdr = ws.getCell(5, notesCol)
   notesHdr.value = 'Notes'; notesHdr.font = f14b; notesHdr.fill = hdrFill; notesHdr.alignment = ctr; notesHdr.border = thinBorder
-  ws.getRow(4).height = 38
+  ws.getRow(5).height = 38
 
-  // ─── Player rows (3 rows each) ───
-  let row = 5
-  roster.forEach((p, pi) => {
+  // ─── Player rows (3 rows each: one per tag group) ───
+  let row = 6
+  roster.forEach((p) => {
     const r1 = row, r2 = row + 1, r3 = row + 2
+    const rows3 = [r1, r2, r3]
     const greenFont = { ...f14, color:{ argb:'FF1E8449' } }
-    const greenFontB = { ...f14b, color:{ argb:'FF1E8449' } }
     const redFont = { ...f14, color:{ argb:'FF922B21' } }
-    const redFontB = { ...f14b, color:{ argb:'FF922B21' } }
+    const groupFont = { name:'Arial', size:10, bold:true, color:{ argb:'FF333333' } }
 
     // Info columns — merge across 3 rows
     const infoVals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '', '', '']
@@ -150,41 +181,28 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       else c.font = f14
     })
 
-    // Row 1 tags: + label then positive tags (white bg)
-    const plusCell = ws.getCell(r1, 8)
-    plusCell.value = '＋'; plusCell.font = greenFontB; plusCell.fill = wFill; plusCell.alignment = ctr; plusCell.border = thinBorder
-    posTags.forEach((tag, ti) => {
-      const c = ws.getCell(r1, 9 + ti)
-      c.value = tag; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
-    })
+    // One row per tag group: [GROUP LABEL] [4 positives, white] [3 negatives, red]
+    const blocks = isGK(p) ? gkRows : outfieldRows
+    blocks.forEach((blk, bi) => {
+      const r = rows3[bi]
+      const lc = ws.getCell(r, 8)
+      lc.value = blk.group; lc.font = groupFont; lc.fill = hdrFill
+      lc.alignment = ctrWrap; lc.border = thinBorder
 
-    // Row 2 tags: - label then negative tags (light red bg)
-    const minusCell = ws.getCell(r2, 8)
-    minusCell.value = '−'; minusCell.font = redFontB; minusCell.fill = rFill; minusCell.alignment = ctr; minusCell.border = thinBorder
-    negTags.forEach((tag, ti) => {
-      const c = ws.getCell(r2, 9 + ti)
-      c.value = tag; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
+      blk.pos.forEach((t, ti) => {
+        const c = ws.getCell(r, 9 + ti)
+        c.value = t.short; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
+      })
+      blk.neg.forEach((t, ti) => {
+        const c = ws.getCell(r, 9 + blk.pos.length + ti)
+        c.value = t.short; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
+      })
+      // Any unused cells in this row stay neutral
+      for (let ci = 9 + blk.pos.length + blk.neg.length; ci < notesCol; ci++) {
+        const c = ws.getCell(r, ci)
+        c.fill = grayFill; c.border = thinBorder
+      }
     })
-
-    // Row 3 tags: extra positives then extra negatives
-    const epCell = ws.getCell(r3, 8)
-    epCell.value = '＋'; epCell.font = greenFontB; epCell.fill = wFill; epCell.alignment = ctr; epCell.border = thinBorder
-    extraPos.forEach((tag, ti) => {
-      const c = ws.getCell(r3, 9 + ti)
-      c.value = tag; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
-    })
-    const negStart = 9 + extraPos.length
-    const negLabel = ws.getCell(r3, negStart)
-    negLabel.value = '−'; negLabel.font = redFontB; negLabel.fill = rFill; negLabel.alignment = ctr; negLabel.border = thinBorder
-    extraNeg.forEach((tag, ti) => {
-      const c = ws.getCell(r3, negStart + 1 + ti)
-      c.value = tag; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
-    })
-    // Fill remaining cells in row 3 with gray
-    for (let ci = negStart + 1 + extraNeg.length; ci < notesCol; ci++) {
-      const c = ws.getCell(r3, ci)
-      c.fill = grayFill
-    }
 
     // Notes column — merge across 3 rows
     ws.mergeCells(r1, notesCol, r3, notesCol)
@@ -192,14 +210,12 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     nc.value = ''; nc.alignment = { vertical:'top', wrapText:true }; nc.border = thinBorder; nc.font = f14
 
     // Row heights
-    ws.getRow(r1).height = 28
-    ws.getRow(r2).height = 24
-    ws.getRow(r3).height = 24
+    rows3.forEach(r => { ws.getRow(r).height = 26 })
 
-    // Thick bottom border on row 3 tag cells — set border once per cell
+    // Thick bottom border closing out the player block — tag cells only, so the
+    // merged info and notes cells are never written to twice (that corrupts the XML)
     for (let ci = 8; ci < notesCol; ci++) {
       const c = ws.getCell(r3, ci)
-      // Preserve existing fill if set
       const existingFill = c.fill
       c.border = playerBottomBorder
       if (existingFill && existingFill.type) c.fill = existingFill
@@ -215,7 +231,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const gp = roster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
     if (!gp.length) return
     const hdrCell = ws2.getCell(r2, 1); hdrCell.value = g.label + ' (' + gp.length + ')'; hdrCell.font = f14b; r2++
-    ;['#','Name','Position','Year','Game','Intang.','K/C/?','Notes'].forEach((h, i) => {
+    ;['#','Name','Position','Year','Game','Compete','K/C/?','Notes'].forEach((h, i) => {
       const c = ws2.getCell(r2, i+1); c.value = h; c.font = f14b; c.fill = hdrFill; c.border = thinBorder; c.alignment = ctr
     }); r2++
     gp.forEach(p => {
@@ -233,7 +249,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const ws3 = wb.addWorksheet('Score Summary')
   ws3.mergeCells(1, 1, 1, 10)
   ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay; ws3.getCell(1,1).font = f14b
-  const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Intang.','Avg Total','# Evals','Tags','Notes']
+  const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals','Tags','Notes']
   sumHdrs.forEach((h,i) => { const c = ws3.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let sr = 4
   roster.forEach(p => {
@@ -241,7 +257,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const gm = pS.map(s=>s.game_ability).filter(v=>v!=null), it = pS.map(s=>s.intangibles).filter(v=>v!=null)
     const aG = gm.length?(gm.reduce((a,b)=>a+b,0)/gm.length).toFixed(1):'', aI = it.length?(it.reduce((a,b)=>a+b,0)/it.length).toFixed(1):''
     const aT = aG&&aI?((parseFloat(aG)+parseFloat(aI))/2).toFixed(1):''
-    const tags = [...new Set(pS.flatMap(s=>{try{return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[]}catch{return[]}}))].map(t=>{const i=POS_TAGS.find(pt=>pt.val===t);return i?i.label:t}).join(', ')
+    const tags = [...new Set(pS.flatMap(s=>{try{return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[]}catch{return[]}}))].map(t=>{const i=ALL_TAGS.find(pt=>pt.val===t);return i?i.label:t}).join(', ')
     const notes = pS.filter(s=>s.notes).map(s=>{const ev=evaluators.find(e=>e.id===s.evaluator_id);return(ev?.name||'?')+' (D'+s.day_number+'): '+s.notes}).join(' | ')
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, aG, aI, aT, gm.length, tags, notes]
     vals.forEach((v,i) => { const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=i>=8?{...leftMid,wrapText:true}:ctr })
@@ -271,41 +287,75 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 }
 
 // ── EVALUATION TAGS ──
+// Grouped into three clusters, ordered so game intelligence is read first.
+// Research note: subjectively rated tactical skill is the strongest single
+// predictor of playing level, while speed/agility show little or no
+// correlation — so raw athleticism is folded into "Wins Duels" rather than
+// given its own prominent tag where it would anchor the evaluator's eye.
+// Each group holds exactly 4 positives then 3 negatives (the printed sheet
+// lays each group out as one 7-column row).
+const TAG_GROUPS = ['READS', 'EXECUTES', 'COMPETES']
+const GK_TAG_GROUPS = ['HANDLING', 'SHOT STOP', 'SWEEP / DIST']
+
 const POS_TAGS = [
-  { label: 'Great first touch', val: '+first_touch', pos: true },
-  { label: 'Poor first touch', val: '-first_touch', pos: false },
-  { label: 'Quick speed of play', val: '+speed_of_play', pos: true },
-  { label: 'Slow speed of play', val: '-speed_of_play', pos: false },
-  { label: 'Smart decisions', val: '+decisions', pos: true },
-  { label: 'Poor decisions', val: '-decisions', pos: false },
-  { label: 'Accurate passer', val: '+passing', pos: true },
-  { label: 'Poor passing', val: '-passing', pos: false },
-  { label: 'Strong off-ball movement', val: '+off_ball', pos: true },
-  { label: 'Ball watches / static', val: '-off_ball', pos: false },
-  { label: 'Wins 1v1s', val: '+1v1', pos: true },
-  { label: 'Avoids / loses 1v1s', val: '-1v1', pos: false },
-  { label: 'High work rate', val: '+work_rate', pos: true },
-  { label: 'Low work rate', val: '-work_rate', pos: false },
-  { label: 'Vocal / communicates', val: '+communication', pos: true },
-  { label: 'Doesn\'t communicate', val: '-communication', pos: false },
-  { label: 'Composed under pressure', val: '+composure', pos: true },
-  { label: 'Loses composure', val: '-composure', pos: false },
-  { label: 'Great positioning', val: '+positioning', pos: true },
-  { label: 'Poor positioning', val: '-positioning', pos: false },
-  { label: 'Makes others better', val: '+elevates', pos: true },
-  { label: 'Doesn\'t impact the game', val: '-impact', pos: false },
-  { label: 'Athletic / fast', val: '+athletic', pos: true },
-  { label: 'Lacks athleticism', val: '-athletic', pos: false },
-  { label: 'Tracks back / defends', val: '+tracks_back', pos: true },
-  { label: 'Doesn\'t track back', val: '-tracks_back', pos: false },
-  { label: 'Good soccer brain', val: '+soccer_iq', pos: true },
-  { label: 'Slow to read the game', val: '-soccer_iq', pos: false },
-  { label: 'Wins aerial duels', val: '+aerial', pos: true },
-  { label: 'Creative in attack', val: '+creative', pos: true },
-  { label: 'Strong defender', val: '+defending', pos: true },
-  { label: 'Coachable / listens', val: '+coachable', pos: true },
-  { label: 'Leader on the field', val: '+leader', pos: true },
+  // READS — game intelligence
+  { label: 'Scans before receiving', short: 'Scans',       val: '+scans',        pos: true,  group: 'READS' },
+  { label: 'Smart decisions',        short: 'Decisions',   val: '+decisions',    pos: true,  group: 'READS' },
+  { label: 'Great positioning',      short: 'Position',    val: '+positioning',  pos: true,  group: 'READS' },
+  { label: 'Strong off-ball movement', short: 'Off-ball',  val: '+off_ball',     pos: true,  group: 'READS' },
+  { label: 'Slow to read the game',  short: 'Slow Read',   val: '-soccer_iq',    pos: false, group: 'READS' },
+  { label: 'Ball watches / static',  short: 'Static',      val: '-off_ball',     pos: false, group: 'READS' },
+  { label: 'Out of position',        short: 'Out of Pos',  val: '-positioning',  pos: false, group: 'READS' },
+
+  // EXECUTES — technical delivery under pressure
+  { label: 'Great first touch',      short: '1st Touch',   val: '+first_touch',  pos: true,  group: 'EXECUTES' },
+  { label: 'Accurate passer',        short: 'Passing',     val: '+passing',      pos: true,  group: 'EXECUTES' },
+  { label: 'Wins 1v1s',              short: '1v1',         val: '+1v1',          pos: true,  group: 'EXECUTES' },
+  { label: 'Creative in attack',     short: 'Creative',    val: '+creative',     pos: true,  group: 'EXECUTES' },
+  { label: 'Heavy first touch',      short: 'Heavy 1st',   val: '-first_touch',  pos: false, group: 'EXECUTES' },
+  { label: 'Gives the ball away',    short: 'Loses Ball',  val: '-passing',      pos: false, group: 'EXECUTES' },
+  { label: 'Panics under pressure',  short: 'Panics',      val: '-composure',    pos: false, group: 'EXECUTES' },
+
+  // COMPETES — physical, psychological and social
+  { label: 'High work rate',         short: 'Work Rate',   val: '+work_rate',    pos: true,  group: 'COMPETES' },
+  { label: 'Wins duels',             short: 'Wins Duels',  val: '+duels',        pos: true,  group: 'COMPETES' },
+  { label: 'Coachable / listens',    short: 'Coachable',   val: '+coachable',    pos: true,  group: 'COMPETES' },
+  { label: 'Leads / organizes',      short: 'Leader',      val: '+leader',       pos: true,  group: 'COMPETES' },
+  { label: 'Doesn\'t track back',    short: 'No Track',    val: '-tracks_back',  pos: false, group: 'COMPETES' },
+  { label: 'Hides / no impact',      short: 'Hides',       val: '-impact',       pos: false, group: 'COMPETES' },
+  { label: 'Poor body language',     short: 'Body Lang',   val: '-body_language',pos: false, group: 'COMPETES' },
 ]
+
+// Goalkeepers get their own set — outfield tags like "off-ball movement"
+// or "1v1 dribbling" carry a different meaning or none at all for a keeper.
+const GK_TAGS = [
+  { label: 'Catches cleanly',        short: 'Catches',     val: 'gk+catches',    pos: true,  group: 'HANDLING' },
+  { label: 'Commands crosses',       short: 'Crosses',     val: 'gk+crosses',    pos: true,  group: 'HANDLING' },
+  { label: 'Punches decisively',     short: 'Punches',     val: 'gk+punches',    pos: true,  group: 'HANDLING' },
+  { label: 'Secure hands',           short: 'Secure',      val: 'gk+secure',     pos: true,  group: 'HANDLING' },
+  { label: 'Spills / parries poorly',short: 'Spills',      val: 'gk-spills',     pos: false, group: 'HANDLING' },
+  { label: 'Late off the line',      short: 'Late',        val: 'gk-late',       pos: false, group: 'HANDLING' },
+  { label: 'Flaps at crosses',       short: 'Flaps',       val: 'gk-flaps',      pos: false, group: 'HANDLING' },
+
+  { label: 'Sharp reactions',        short: 'Reactions',   val: 'gk+reactions',  pos: true,  group: 'SHOT STOP' },
+  { label: 'Sets feet early',        short: 'Set Early',   val: 'gk+set',        pos: true,  group: 'SHOT STOP' },
+  { label: 'Strong in 1v1s',         short: '1v1s',        val: 'gk+1v1',        pos: true,  group: 'SHOT STOP' },
+  { label: 'Good angles',            short: 'Angles',      val: 'gk+angles',     pos: true,  group: 'SHOT STOP' },
+  { label: 'Slow to set',            short: 'Slow Set',    val: 'gk-slowset',    pos: false, group: 'SHOT STOP' },
+  { label: 'Beaten at near post',    short: 'Near Post',   val: 'gk-nearpost',   pos: false, group: 'SHOT STOP' },
+  { label: 'Weak to his weak side',  short: 'Weak Side',   val: 'gk-weakside',   pos: false, group: 'SHOT STOP' },
+
+  { label: 'Comfortable with feet',  short: 'Feet',        val: 'gk+feet',       pos: true,  group: 'SWEEP / DIST' },
+  { label: 'Accurate distribution',  short: 'Distrib',     val: 'gk+dist',       pos: true,  group: 'SWEEP / DIST' },
+  { label: 'Organizes the back line',short: 'Organizes',   val: 'gk+organizes',  pos: true,  group: 'SWEEP / DIST' },
+  { label: 'Sweeps behind the line', short: 'Sweeps',      val: 'gk+sweeps',     pos: true,  group: 'SWEEP / DIST' },
+  { label: 'Sloppy with feet',       short: 'Sloppy Ft',   val: 'gk-sloppyfeet', pos: false, group: 'SWEEP / DIST' },
+  { label: 'Stays on his line',      short: 'Stays Line',  val: 'gk-staysline',  pos: false, group: 'SWEEP / DIST' },
+  { label: 'Doesn\'t organize',      short: 'No Org',      val: 'gk-noorg',      pos: false, group: 'SWEEP / DIST' },
+]
+
+const ALL_TAGS = [...POS_TAGS, ...GK_TAGS]
+const isGK = p => (p?.pos1 === 'GK' || p?.pos2 === 'GK')
 
 // ── STYLES ──
 const input = { width:'100%', padding:'12px 14px', borderRadius:10, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:16, boxSizing:'border-box' }
@@ -500,11 +550,15 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
       {expanded && (
         <div style={{ padding:'4px 14px 14px', borderTop:'1px solid #1e293b' }}>
           {/* Score buttons */}
-          {['Game Ability','Intangibles'].map((cat,ci) => {
+          {[
+            { cat:'Game', hint:'reads + technical execution' },
+            { cat:'Compete', hint:'work rate, duels, coachability, response to mistakes' },
+          ].map(({cat,hint},ci) => {
             const field = ci===0?'game_ability':'intangibles'
             return (
               <div key={cat} style={{ marginBottom:12 }}>
-                <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:5, textTransform:'uppercase', letterSpacing:1 }}>{cat}</div>
+                <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:2, textTransform:'uppercase', letterSpacing:1 }}>{cat}</div>
+                <div style={{ color:'#475569', fontSize:10, marginBottom:5 }}>{hint}</div>
                 <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
                   {[1,2,3,4,5,6,7,8,9,10].map(v => (
                     <button key={v} onClick={()=>onScoreField(field,v)} style={{
@@ -518,31 +572,31 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
             )
           })}
 
-          {/* Quick tags */}
+          {/* Quick tags — grouped, and GK-specific for keepers */}
           <div style={{ marginBottom:12 }}>
-            <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:5, textTransform:'uppercase', letterSpacing:1 }}>Quick Tags (tap to toggle)</div>
-            <div style={{ color:'#475569', fontSize:10, marginBottom:6 }}>Strengths</div>
-            <div style={{ display:'flex', gap:4, flexWrap:'wrap', marginBottom:8 }}>
-              {POS_TAGS.filter(t=>t.pos).map(t => {
-                const active = tags.includes(t.val)
-                return <button key={t.val} onClick={()=>onToggleTag(t.val)} style={{
-                  padding:'5px 10px', borderRadius:16, border:'none', fontSize:11, fontWeight:600, cursor:'pointer',
-                  background: active ? G : '#1e293b', color: active ? Y : '#94a3b8',
-                  boxShadow: active ? '0 0 0 1px '+G : 'none',
-                }}>{active?'✓ ':''}{t.label}</button>
-              })}
+            <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:6, textTransform:'uppercase', letterSpacing:1 }}>
+              Quick Tags (tap to toggle){isGK(player) ? ' — Goalkeeper' : ''}
             </div>
-            <div style={{ color:'#475569', fontSize:10, marginBottom:6 }}>Weaknesses</div>
-            <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
-              {POS_TAGS.filter(t=>!t.pos).map(t => {
-                const active = tags.includes(t.val)
-                return <button key={t.val} onClick={()=>onToggleTag(t.val)} style={{
-                  padding:'5px 10px', borderRadius:16, border:'none', fontSize:11, fontWeight:600, cursor:'pointer',
-                  background: active ? '#7f1d1d' : '#1e293b', color: active ? '#fca5a5' : '#94a3b8',
-                  boxShadow: active ? '0 0 0 1px #7f1d1d' : 'none',
-                }}>{active?'✓ ':''}{t.label}</button>
-              })}
-            </div>
+            {(isGK(player) ? GK_TAG_GROUPS : TAG_GROUPS).map(grp => {
+              const src = isGK(player) ? GK_TAGS : POS_TAGS
+              const inGrp = src.filter(t => t.group === grp)
+              return (
+                <div key={grp} style={{ marginBottom:9 }}>
+                  <div style={{ color:'#475569', fontSize:10, fontWeight:700, marginBottom:5, letterSpacing:1 }}>{grp}</div>
+                  <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                    {inGrp.map(t => {
+                      const active = tags.includes(t.val)
+                      return <button key={t.val} onClick={()=>onToggleTag(t.val)} style={{
+                        padding:'5px 10px', borderRadius:16, border:'none', fontSize:11, fontWeight:600, cursor:'pointer',
+                        background: active ? (t.pos ? G : '#7f1d1d') : '#1e293b',
+                        color: active ? (t.pos ? Y : '#fca5a5') : (t.pos ? '#94a3b8' : '#b08a8a'),
+                        boxShadow: active ? '0 0 0 1px '+(t.pos ? G : '#7f1d1d') : 'none',
+                      }}>{active?'✓ ':''}{t.label}</button>
+                    })}
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           {/* Notes - debounced */}
@@ -602,7 +656,7 @@ function UploadEvalTab({ evaluators, players, currentDay, onSaved }) {
       // Known players for matching
       const playerList = players.map(p => `#${p.pinnie_num}: ${p.first_name} ${p.last_name}`).join('\n')
 
-      const tagList = POS_TAGS.map(t => `"${t.val}": ${t.label}`).join('\n')
+      const tagList = ALL_TAGS.map(t => `"${t.val}": ${t.label}`).join('\n')
 
       const response = await fetch('/api/process-sheet', {
         method: 'POST',
@@ -618,7 +672,7 @@ CRITICAL RULE ABOUT TAGS: Every player row has the SAME tags pre-printed on the 
 
 LAYOUT: Each player has 3 rows of tag cells. Row 1 has a "+" label followed by: 1st Touch, Speed, Decisions, Passing, Off-ball, 1v1, Work Rate, Vocal, Composed, Positioning, Elevates, Athletic, Soccer IQ. Row 2 has a "−" label followed by the same categories but as weaknesses (1st Touch, Speed, Decisions, Passing, Static, 1v1, Work Rate, Quiet, Composure, Positioning, No Impact, Unathletic, Slow Read). Row 3 has extra tags.
 
-SCORES: The Game Ability and Intangibles columns contain handwritten numbers 1-10. Read them carefully. If blank or unreadable, use null.
+SCORES: The GAME and COMPETE columns contain handwritten numbers 1-10. Read them carefully. If blank or unreadable, use null.
 
 K/C/? COLUMN: May contain K or ✓ (= "keep"), C or ✗ (= "cut"), or ? (= undecided). If blank, use null.
 
@@ -839,7 +893,7 @@ Skip blank rows. Most players will have FEW or ZERO tags — that is normal.` }
                       </select>
                     </div>
                     <div>
-                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Intangibles</div>
+                      <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Compete</div>
                       <select value={entry.intangibles||''} onChange={e=>updateExtracted(idx,'intangibles',e.target.value?parseInt(e.target.value):null)}
                         style={{ padding:'4px 8px', borderRadius:6, border:'1px solid #334155', background:'#0f172a', color:'#e2e8f0', fontSize:14, fontWeight:700 }}>
                         <option value="">—</option>
@@ -863,7 +917,7 @@ Skip blank rows. Most players will have FEW or ZERO tags — that is normal.` }
                       <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:3 }}>Tags (tap to remove)</div>
                       <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
                         {entry.tags.map(tagVal => {
-                          const tagInfo = POS_TAGS.find(t=>t.val===tagVal)
+                          const tagInfo = ALL_TAGS.find(t=>t.val===tagVal)
                           const isPos = tagInfo?.pos ?? !tagVal.startsWith('-')
                           return <button key={tagVal} onClick={()=>removeTag(idx,tagVal)} style={{
                             padding:'3px 8px', borderRadius:12, border:'none', fontSize:11, cursor:'pointer',
@@ -1317,7 +1371,7 @@ function EvalView({ evaluator, onLogout }) {
             </div>
             <div style={{ display:'flex', gap:5, marginBottom:12, flexWrap:'wrap' }}>
               <span style={{ color:'#475569', fontSize:10, alignSelf:'center' }}>Sort:</span>
-              {[['num','#'],['avg','Avg'],['game','Game'],['intangibles','Intang.'],['name','Name']].map(([k,l])=>(
+              {[['num','#'],['avg','Avg'],['game','Game'],['intangibles','Compete'],['name','Name']].map(([k,l])=>(
                 <button key={k} onClick={()=>setSortBy(k)} style={{ padding:'3px 8px', borderRadius:6, border:'1px solid '+(sortBy===k?Y+'60':'#1e293b'), background:sortBy===k?'#1e293b':'transparent', color:sortBy===k?Y:'#475569', fontSize:10, fontWeight:600, cursor:'pointer' }}>{l}</button>
               ))}
             </div>
@@ -1377,7 +1431,7 @@ function EvalView({ evaluator, onLogout }) {
                           <div style={{ fontSize:10, color:'#475569', textTransform:'uppercase', marginBottom:4 }}>Tags (count = # of evaluators)</div>
                           <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
                             {Object.entries(p.tagCounts).sort((a,b)=>b[1]-a[1]).map(([tag,count]) => {
-                              const tagInfo = POS_TAGS.find(t=>t.val===tag)
+                              const tagInfo = ALL_TAGS.find(t=>t.val===tag)
                               const isPos = tagInfo?.pos ?? !tag.startsWith('-')
                               return <span key={tag} style={{ fontSize:10, padding:'2px 7px', borderRadius:10, background:isPos?G+'25':'#7f1d1d25', color:isPos?'#6ee7b7':'#fca5a5', fontWeight:600 }}>
                                 {tagInfo?.label||tag} {count>1?'×'+count:''}
