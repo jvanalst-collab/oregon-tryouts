@@ -38,7 +38,16 @@ const POS_LIST_GROUPS = [
 ]
 
 // ── EXCEL EXPORT ──
-async function exportRosterToExcel(players, scores, evaluators, currentDay, checkins) {
+const TRYOUT_DAYS = [1, 2, 3, 4]
+const attended = (checkins, playerId, day) =>
+  !!(checkins || []).find(c => c.player_id === playerId && c.day_number === day && c.checked_in)
+
+async function exportRosterToExcel(players, scores, evaluators, currentDay, checkins, opts = {}) {
+  // presentOnly=false (the default) exports everyone still in the tryout — the
+  // sheet you print after a round of cuts, before anyone has arrived.
+  // presentOnly=true narrows to players marked present today, for a reprint
+  // once attendance is taken.
+  const { presentOnly = false } = opts
   // Load ExcelJS from CDN (supports full styling unlike free SheetJS)
   if (!window.ExcelJS) {
     await new Promise((resolve, reject) => {
@@ -49,9 +58,12 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     })
   }
 
+  // "active" already excludes anyone cut on an earlier day, so the post-cuts
+  // sheet is just every active player.
   const active = players.filter(p => p.status === 'active').sort((a,b) => a.pinnie_num - b.pinnie_num)
-  const checkedIn = active.filter(p => (checkins||[]).find(c => c.player_id === p.id && c.day_number === currentDay && c.checked_in))
-  const roster = checkedIn.length > 0 ? checkedIn : active
+  const roster = presentOnly
+    ? active.filter(p => attended(checkins, p.id, currentDay))
+    : active
 
   // Each group prints as one row: a label cell, then 4 positives and 3 negatives.
   const groupRows = src => TAG_GROUPS.map(g => ({
@@ -251,9 +263,11 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
   // ═══ SHEET 3: SCORE SUMMARY ═══
   const ws3 = wb.addWorksheet('Score Summary')
-  ws3.mergeCells(1, 1, 1, 10)
-  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay; ws3.getCell(1,1).font = f14b
-  const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals','Tags','Notes']
+  ws3.mergeCells(1, 1, 1, 15)
+  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4 = attendance; blank = day not reached)'
+  ws3.getCell(1,1).font = f14b
+  const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals',
+                   ...TRYOUT_DAYS.map(d=>'D'+d), 'Days', 'Tags','Notes']
   sumHdrs.forEach((h,i) => { const c = ws3.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let sr = 4
   roster.forEach(p => {
@@ -263,11 +277,21 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const aT = aG&&aI?((parseFloat(aG)+parseFloat(aI))/2).toFixed(1):''
     const tags = [...new Set(pS.flatMap(s=>{try{return s.tags?(typeof s.tags==='string'?JSON.parse(s.tags):s.tags):[]}catch{return[]}}))].map(t=>{const i=ALL_TAGS.find(pt=>pt.val===t);return i?i.label:t}).join(', ')
     const notes = pS.filter(s=>s.notes).map(s=>{const ev=evaluators.find(e=>e.id===s.evaluator_id);return(ev?.name||'?')+' (D'+s.day_number+'): '+s.notes}).join(' | ')
-    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, aG, aI, aT, gm.length, tags, notes]
-    vals.forEach((v,i) => { const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=i>=8?{...leftMid,wrapText:true}:ctr })
+    // Attendance: a day that hasn't happened yet stays blank rather than
+    // reading as an absence.
+    const att = TRYOUT_DAYS.map(d => d > currentDay ? '' : (attended(checkins, p.id, d) ? '✓' : '—'))
+    const daysAttended = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year,
+                  aG, aI, aT, gm.length, ...att, daysAttended, tags, notes]
+    const textFrom = 8 + TRYOUT_DAYS.length + 1 // Tags and Notes wrap; everything before is centered
+    vals.forEach((v,i) => {
+      const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder
+      c.alignment = i>=textFrom ? {...leftMid,wrapText:true} : ctr
+      if (v === '—') c.font = { ...f14, color:{ argb:'FF922B21' } }
+    })
     sr++
   })
-  ;[8,35,22,10,13,13,13,10,50,70].forEach((w,i) => ws3.getColumn(i+1).width = w)
+  ;[8,35,22,10,13,13,13,10,7,7,7,7,9,50,70].forEach((w,i) => ws3.getColumn(i+1).width = w)
 
   // ═══ SHEET 4: PHONE LIST ═══
   const ws4 = wb.addWorksheet('Phone List')
@@ -1093,6 +1117,7 @@ function EvalView({ evaluator, onLogout }) {
   const checkins = useMemo(() => showDemo ? [...demoGenerated.checkins, ...dbCheckins] : dbCheckins, [dbCheckins, demoGenerated, showDemo])
 
   // ── HELPERS ──
+  const [exportPresentOnly, setExportPresentOnly] = useState(false)
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
@@ -1104,6 +1129,45 @@ function EvalView({ evaluator, onLogout }) {
     else { await supabase.from('day_checkins').insert({ player_id: playerId, day_number: day, checked_in: true }) }
     loadAll()
   }
+
+  const presentCount = useMemo(() => activePlayers.filter(p => isCheckedIn(p.id, currentDay)).length, [activePlayers, isCheckedIn, currentDay])
+  const absentCount = activePlayers.length - presentCount
+
+  // Bulk attendance for the current day. Real players only — demo rows are
+  // display-only and never hit the database.
+  const setAllPresent = async (present) => {
+    const real = activePlayers.filter(p => !String(p.id).startsWith('demo-'))
+    const existing = new Map(dbCheckins.filter(c => c.day_number === currentDay).map(c => [c.player_id, c]))
+    const toInsert = [], toUpdate = []
+    real.forEach(p => {
+      const row = existing.get(p.id)
+      if (!row) { if (present) toInsert.push({ player_id: p.id, day_number: currentDay, checked_in: true }) }
+      else if (row.checked_in !== present) toUpdate.push(row.id)
+    })
+    if (toInsert.length) await supabase.from('day_checkins').insert(toInsert)
+    if (toUpdate.length) await supabase.from('day_checkins').update({ checked_in: present }).in('id', toUpdate)
+    loadAll()
+  }
+
+  // Compact D1-D4 history so an absence is visible wherever a player is listed.
+  const AttendanceDots = ({ player }) => (
+    <span style={{ display:'inline-flex', gap:3, alignItems:'center' }}>
+      {TRYOUT_DAYS.map(d => {
+        const future = d > currentDay
+        const here = isCheckedIn(player.id, d)
+        return (
+          <span key={d} title={'Day '+d+(future?' — not yet':here?' — present':' — absent')}
+            style={{
+              width:13, height:13, borderRadius:3, fontSize:8, fontWeight:700,
+              display:'inline-flex', alignItems:'center', justifyContent:'center',
+              background: future ? 'transparent' : here ? G : '#3f1d1d',
+              border:'1px solid '+(future ? '#1e293b' : here ? G : '#7f1d1d'),
+              color: future ? '#334155' : here ? Y : '#fca5a5',
+            }}>{d}</span>
+        )
+      })}
+    </span>
+  )
 
   const submitScoreField = async (playerId, field, value) => {
     const existing = getScore(evaluator.id, playerId, currentDay)
@@ -1285,16 +1349,47 @@ function EvalView({ evaluator, onLogout }) {
       {/* ══ ROSTER TAB ══ */}
       {view === 'roster' && (
         <div style={{ padding:16 }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
-            <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Check-In — tap to toggle</div>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8, gap:8 }}>
+            <div>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Attendance — tap to toggle</div>
+              <div style={{ color:Y, fontSize:12, fontWeight:600, marginTop:2 }}>
+                {presentCount} of {activePlayers.length} present
+                {absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
+              </div>
+            </div>
             {activePlayers.length > 0 && (
-              <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins)} style={{
+              <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins,{presentOnly:exportPresentOnly})} style={{
                 padding:'6px 14px', borderRadius:8, border:'none', background:Y, color:G,
                 fontSize:12, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer',
-                display:'flex', alignItems:'center', gap:4,
-              }}>📥 EXPORT FOR PRINT</button>
+                display:'flex', alignItems:'center', gap:4, flexShrink:0,
+              }}>📥 EXPORT</button>
             )}
           </div>
+
+          {activePlayers.length > 0 && (<>
+            {/* What the export contains — explicit, so a reprint never silently drops players */}
+            <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:8, flexWrap:'wrap' }}>
+              <span style={{ color:'#475569', fontSize:10, alignSelf:'center' }}>Export:</span>
+              {[[false,'Everyone still in ('+activePlayers.length+')'],[true,'Present today ('+presentCount+')']].map(([v,l])=>(
+                <button key={String(v)} onClick={()=>setExportPresentOnly(v)} style={{
+                  padding:'3px 9px', borderRadius:6, border:'1px solid '+(exportPresentOnly===v?Y+'60':'#1e293b'),
+                  background:exportPresentOnly===v?'#1e293b':'transparent', color:exportPresentOnly===v?Y:'#475569',
+                  fontSize:10, fontWeight:600, cursor:'pointer' }}>{l}</button>
+              ))}
+            </div>
+
+            {/* Bulk attendance — most players show up, so marking the exceptions is faster */}
+            <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+              <button onClick={()=>{if(confirm('Mark all '+activePlayers.length+' players present for Day '+currentDay+'?'))setAllPresent(true)}}
+                style={{ flex:1, padding:'7px 10px', borderRadius:8, border:'1px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:11, fontWeight:600, cursor:'pointer' }}>
+                ✓ All present
+              </button>
+              <button onClick={()=>{if(confirm('Clear Day '+currentDay+' attendance for all players?'))setAllPresent(false)}}
+                style={{ flex:1, padding:'7px 10px', borderRadius:8, border:'1px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:11, fontWeight:600, cursor:'pointer' }}>
+                Clear all
+              </button>
+            </div>
+          </>)}
           {activePlayers.length===0 ? emptyState('📋','No players checked in yet.') : (
             <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
               {activePlayers.map(p => {
@@ -1307,7 +1402,10 @@ function EvalView({ evaluator, onLogout }) {
                         <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{p.pinnie_num}</span>
                         <span style={{ color:ci?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
                       </div>
-                      <div style={{ color:'#64748b', fontSize:11, marginTop:1 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</div>
+                      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:2 }}>
+                        <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</span>
+                        <AttendanceDots player={p} />
+                      </div>
                     </div>
                     <div style={{ width:26, height:26, borderRadius:6, background:ci?G:'#1e293b', border:'2px solid '+(ci?Y:'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:Y, fontSize:14, fontWeight:700 }}>{ci?'✓':''}</div>
                   </button>
@@ -1562,7 +1660,7 @@ function EvalView({ evaluator, onLogout }) {
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
             <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Export</div>
             <div style={{ color:'#64748b', fontSize:12, marginBottom:12 }}>Download a printable Excel file with evaluation sheet, position groups, and score summaries.</div>
-            <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins)} style={{ padding:'10px 20px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
+            <button onClick={()=>exportRosterToExcel(players,scores,evaluators,currentDay,checkins,{presentOnly:exportPresentOnly})} style={{ padding:'10px 20px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>
               📥 EXPORT TO EXCEL
             </button>
           </div>
@@ -1600,7 +1698,10 @@ function EvalView({ evaluator, onLogout }) {
               <div key={p.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid #1e293b' }}>
                 <PlayerPhoto player={p} size={32} />
                 <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:Y }}>#{p.pinnie_num}</span>
-                <div style={{ flex:1, color:'#e2e8f0', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</div>
+                <div style={{ flex:1 }}>
+                  <div style={{ color:'#e2e8f0', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</div>
+                  <div style={{ marginTop:3 }}><AttendanceDots player={p} /></div>
+                </div>
                 <button onClick={()=>{if(confirm('Cut '+p.first_name+' '+p.last_name+'?'))cutPlayer(p.id)}} style={{ padding:'5px 12px', borderRadius:6, border:'none', background:'#7f1d1d', color:'#fca5a5', fontSize:11, fontWeight:600, cursor:'pointer' }}>CUT</button>
               </div>
             ))}
