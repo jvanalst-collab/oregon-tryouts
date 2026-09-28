@@ -92,7 +92,30 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     ...gkRows.map(r => r.pos.length + r.neg.length),
   )
   const numTagCols = TAGS_PER_ROW + 1 // +1 for the group label column
-  const notesCol = 7 + numTagCols + 1
+
+  // From Day 3 the field is small enough to be worth putting faces on the
+  // sheet — that is when evaluators are comparing a short list closely and
+  // need to match a name to a person. PH shifts every column right by one to
+  // make room for the photo in column A.
+  const includePhotos = currentDay >= 3 && opts.photos !== false
+  const PH = includePhotos ? 1 : 0
+  const notesCol = 7 + PH + numTagCols + 1
+
+  // Pull the photos down as binary before building the sheet. Six at a time
+  // keeps a 60-player export quick without hammering storage. A photo that
+  // fails to load is simply skipped — the pinnie number sits right beside it.
+  const photoData = new Map()
+  if (includePhotos) {
+    const withPhotos = roster.filter(p => p.photo_url)
+    for (let i = 0; i < withPhotos.length; i += 6) {
+      await Promise.all(withPhotos.slice(i, i + 6).map(async p => {
+        try {
+          const res = await fetch(p.photo_url)
+          if (res.ok) photoData.set(p.id, await res.arrayBuffer())
+        } catch (e) { console.warn('Photo skipped for #'+p.pinnie_num, e) }
+      }))
+    }
+  }
 
   const thin = { style:'thin', color:{ argb:'FFBFBFBF' } }
   const thickB = { style:'thick', color:{ argb:'FF333333' } }
@@ -125,15 +148,16 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ws.pageSetup.printTitlesRow = '5:5'
 
   // Column widths (ExcelJS units are slightly narrower than openpyxl)
-  ws.getColumn(1).width = 6     // #
-  ws.getColumn(2).width = 20    // Name
-  ws.getColumn(3).width = 15    // Pos
-  ws.getColumn(4).width = 8     // Year
-  ws.getColumn(5).width = 9     // Game
-  ws.getColumn(6).width = 14    // Compete
-  ws.getColumn(7).width = 8     // K/C
-  ws.getColumn(8).width = 14    // Group label
-  for (let i = 9; i < 8 + numTagCols; i++) ws.getColumn(i).width = 13
+  if (includePhotos) ws.getColumn(1).width = 13   // Photo
+  ws.getColumn(1+PH).width = 6     // #
+  ws.getColumn(2+PH).width = 20    // Name
+  ws.getColumn(3+PH).width = 15    // Pos
+  ws.getColumn(4+PH).width = 8     // Year
+  ws.getColumn(5+PH).width = 9     // Game
+  ws.getColumn(6+PH).width = 14    // Compete
+  ws.getColumn(7+PH).width = 8     // K/C
+  ws.getColumn(8+PH).width = 14    // Group label
+  for (let i = 9+PH; i < 8 + PH + numTagCols; i++) ws.getColumn(i).width = 13
   ws.getColumn(notesCol).width = 18
 
   // Row 1: Title
@@ -146,7 +170,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ws.getRow(1).height = 36
 
   // Row 2: Evaluator name
-  ws.mergeCells(2, 1, 2, 8)
+  ws.mergeCells(2, 1, 2, 8+PH)
   ws.getCell(2, 1).value = 'Evaluator Name: _________________________________'
   ws.getCell(2, 1).font = { ...f14, italic:true }
   ws.getCell(2, 1).alignment = leftMid
@@ -169,13 +193,17 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
   // Row 5: Column headers
   const hdrs = ['#','Name','Pos','Yr','GAME\n(1-10)','COMPETE\n(1-10)','K/C/?']
+  if (includePhotos) {
+    const ph = ws.getCell(5, 1)
+    ph.value = 'Photo'; ph.font = f14b; ph.fill = hdrFill; ph.alignment = ctrWrap; ph.border = thinBorder
+  }
   hdrs.forEach((h, i) => {
-    const c = ws.getCell(5, i + 1)
+    const c = ws.getCell(5, i + 1 + PH)
     c.value = h; c.font = f14b; c.fill = hdrFill; c.alignment = ctrWrap; c.border = thinBorder
   })
   // Tag header merged
-  ws.mergeCells(5, 8, 5, 7 + numTagCols)
-  const tagHdr = ws.getCell(5, 8)
+  ws.mergeCells(5, 8+PH, 5, 7 + PH + numTagCols)
+  const tagHdr = ws.getCell(5, 8+PH)
   tagHdr.value = 'CIRCLE APPLICABLE TAGS'; tagHdr.font = f14b; tagHdr.fill = hdrFill; tagHdr.alignment = ctr; tagHdr.border = thinBorder
   // Notes header
   const notesHdr = ws.getCell(5, notesCol)
@@ -195,8 +223,8 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const infoVals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year, '', '', '']
     const mergedInfoBorder = { top:thin, bottom:thin, left:thin, right:thin }
     infoVals.forEach((val, ci) => {
-      ws.mergeCells(r1, ci+1, r3, ci+1)
-      const c = ws.getCell(r1, ci+1)
+      ws.mergeCells(r1, ci+1+PH, r3, ci+1+PH)
+      const c = ws.getCell(r1, ci+1+PH)
       c.value = val
       c.alignment = ci === 1 ? leftMid : ctr
       c.border = mergedInfoBorder
@@ -205,24 +233,44 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       else c.font = f14
     })
 
+    // Photo cell (column A) — merged down the player's three rows so the image
+    // sits in one bordered box. A player without a usable photo gets an empty
+    // cell; their pinnie number is in the very next column.
+    if (includePhotos) {
+      ws.mergeCells(r1, 1, r3, 1)
+      const pc = ws.getCell(r1, 1)
+      pc.border = mergedInfoBorder
+      pc.alignment = ctr
+      const buf = photoData.get(p.id)
+      if (buf) {
+        const imgId = wb.addImage({ buffer: buf, extension: 'jpeg' })
+        // Three rows at 26pt ≈ 104px tall; 88px leaves a small margin.
+        ws.addImage(imgId, {
+          tl: { col: 0.12, row: r1 - 1 + 0.08 },
+          ext: { width: 88, height: 88 },
+          editAs: 'oneCell',
+        })
+      }
+    }
+
     // One row per tag group: [GROUP LABEL] [4 positives, white] [3 negatives, red]
     const blocks = isGK(p) ? gkRows : outfieldRows
     blocks.forEach((blk, bi) => {
       const r = rows3[bi]
-      const lc = ws.getCell(r, 8)
+      const lc = ws.getCell(r, 8+PH)
       lc.value = blk.group; lc.font = groupFont; lc.fill = hdrFill
       lc.alignment = ctrWrap; lc.border = thinBorder
 
       blk.pos.forEach((t, ti) => {
-        const c = ws.getCell(r, 9 + ti)
+        const c = ws.getCell(r, 9 + PH + ti)
         c.value = t.short; c.font = greenFont; c.fill = wFill; c.alignment = ctr; c.border = thinBorder
       })
       blk.neg.forEach((t, ti) => {
-        const c = ws.getCell(r, 9 + blk.pos.length + ti)
+        const c = ws.getCell(r, 9 + PH + blk.pos.length + ti)
         c.value = t.short; c.font = redFont; c.fill = rFill; c.alignment = ctr; c.border = thinBorder
       })
       // Any unused cells in this row stay neutral
-      for (let ci = 9 + blk.pos.length + blk.neg.length; ci < notesCol; ci++) {
+      for (let ci = 9 + PH + blk.pos.length + blk.neg.length; ci < notesCol; ci++) {
         const c = ws.getCell(r, ci)
         c.fill = grayFill; c.border = thinBorder
       }
@@ -238,7 +286,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
     // Thick bottom border closing out the player block — tag cells only, so the
     // merged info and notes cells are never written to twice (that corrupts the XML)
-    for (let ci = 8; ci < notesCol; ci++) {
+    for (let ci = 8+PH; ci < notesCol; ci++) {
       const c = ws.getCell(r3, ci)
       const existingFill = c.fill
       c.border = playerBottomBorder
