@@ -307,17 +307,20 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ;[8,35,22,10,13,13,13,10,7,7,7,7,9,50,70].forEach((w,i) => ws3.getColumn(i+1).width = w)
 
   // ═══ SHEET 4: PHONE LIST ═══
-  const ws4 = wb.addWorksheet('Phone List')
-  ws4.mergeCells(1,1,1,5)
-  ws4.getCell(1,1).value = 'PHONE LIST — DAY '+currentDay; ws4.getCell(1,1).font = f14b
-  ;['#','Name','Phone','Position','Year'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  const ws4 = wb.addWorksheet('Contact List')
+  ws4.mergeCells(1,1,1,6)
+  ws4.getCell(1,1).value = 'CONTACT LIST — DAY '+currentDay; ws4.getCell(1,1).font = f14b
+  ;['#','Name','Phone','Email','Position','Year'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let pr = 4
   roster.forEach(p => {
-    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]
-    vals.forEach((v,i) => { const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder; c.alignment=ctr })
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.email||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]
+    vals.forEach((v,i) => {
+      const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
+      c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
+    })
     pr++
   })
-  ;[8,35,22,22,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ;[8,32,20,38,20,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   const buffer = await wb.xlsx.writeBuffer()
@@ -395,7 +398,7 @@ const labelSt = { color:'#94a3b8', fontSize:12, fontWeight:600, textTransform:'u
 // PLAYER CHECK-IN FORM
 // ═══════════════════════════════════════════
 function PlayerCheckIn({ onBack }) {
-  const [form, setForm] = useState({ first:'', last:'', pos1:'', pos2:'', year:'', num:'', phone:'' })
+  const [form, setForm] = useState({ first:'', last:'', pos1:'', pos2:'', year:'', num:'', phone:'', email:'' })
   const [photo, setPhoto] = useState(null)
   const [photoFile, setPhotoFile] = useState(null)
   const [submitted, setSubmitted] = useState(false)
@@ -413,12 +416,14 @@ function PlayerCheckIn({ onBack }) {
   }
 
   const handleSubmit = async () => {
-    const { first, last, pos1, year, num, phone } = form
+    const { first, last, pos1, year, num, phone, email } = form
     if (!first.trim()||!last.trim()) return setError('Enter your first and last name.')
     if (!pos1) return setError('Select your primary position.')
     if (!year) return setError('Select your year.')
     if (!num||isNaN(num)) return setError('Enter your pinnie number.')
     if (!phone.trim()) return setError('Enter your phone number.')
+    if (!email.trim()) return setError('Enter your email address.')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return setError('That email address doesn\'t look right.')
     if (!photo) return setError('Take a photo before submitting.')
     setError(''); setLoading(true)
     try {
@@ -427,10 +432,19 @@ function PlayerCheckIn({ onBack }) {
       // across all four days. Late arrivals get fresh numbers.
       const { data: existing } = await supabase.from('players').select('id').eq('pinnie_num', parseInt(num))
       if (existing && existing.length > 0) { setError('Pinnie #'+num+' is already taken. Grab a different pinnie.'); setLoading(false); return }
-      const { data: player, error: insertErr } = await supabase.from('players').insert({
+      const base = {
         first_name: first.trim(), last_name: last.trim(), pos1: form.pos1, pos2: form.pos2||'',
         year, pinnie_num: parseInt(num), phone: phone.trim(),
-      }).select().single()
+      }
+      let { data: player, error: insertErr } =
+        await supabase.from('players').insert({ ...base, email: email.trim().toLowerCase() }).select().single()
+      // If the email column hasn't been added to the database yet, still let the
+      // player through rather than blocking check-in at the field. The address
+      // is lost, but nobody is stuck standing there unable to sign in.
+      if (insertErr && /email/i.test(insertErr.message || '')) {
+        console.warn('players.email column missing — saving without it:', insertErr.message)
+        ;({ data: player, error: insertErr } = await supabase.from('players').insert(base).select().single())
+      }
       if (insertErr) throw insertErr
       const photoUrl = await uploadPhoto(player.id, photoFile)
       await supabase.from('players').update({ photo_url: photoUrl }).eq('id', player.id)
@@ -472,6 +486,7 @@ function PlayerCheckIn({ onBack }) {
           <div style={{ flex:1 }}><label style={labelSt}>Pinnie Number</label><input value={form.num} onChange={e=>set('num',e.target.value)} placeholder="#" type="number" style={input} /></div>
         </div>
         <div style={{ marginBottom:16 }}><label style={labelSt}>Phone Number</label><input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="(555) 123-4567" type="tel" style={input} /></div>
+        <div style={{ marginBottom:16 }}><label style={labelSt}>Email</label><input value={form.email} onChange={e=>set('email',e.target.value)} placeholder="you@uoregon.edu" type="email" autoCapitalize="none" autoCorrect="off" style={input} /></div>
         <div style={{ marginBottom:20 }}>
           <label style={labelSt}>Your Photo</label>
           <input ref={fileRef} type="file" accept="image/*" capture="user" onChange={handlePhoto} style={{ display:'none' }} />
