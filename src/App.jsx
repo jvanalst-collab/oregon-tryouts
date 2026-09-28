@@ -42,6 +42,14 @@ const TRYOUT_DAYS = [1, 2, 3, 4]
 const attended = (checkins, playerId, day) =>
   !!(checkins || []).find(c => c.player_id === playerId && c.day_number === day && c.checked_in)
 
+// The first day a player turned up. Someone who joins on Day 2 was never
+// expected on Day 1, so those earlier days are "not in the pool yet" rather
+// than absences — otherwise a late arrival looks like a no-show at cut time.
+const joinedDay = (checkins, playerId) => {
+  const days = (checkins || []).filter(c => c.player_id === playerId && c.checked_in).map(c => c.day_number)
+  return days.length ? Math.min(...days) : null
+}
+
 async function exportRosterToExcel(players, scores, evaluators, currentDay, checkins, opts = {}) {
   // presentOnly=false (the default) exports everyone still in the tryout — the
   // sheet you print after a round of cuts, before anyone has arrived.
@@ -264,7 +272,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // ═══ SHEET 3: SCORE SUMMARY ═══
   const ws3 = wb.addWorksheet('Score Summary')
   ws3.mergeCells(1, 1, 1, 15)
-  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4 = attendance; blank = day not reached)'
+  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4 attendance: ✓ present · — absent · \u00b7 joined later · blank = day not reached)'
   ws3.getCell(1,1).font = f14b
   const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals',
                    ...TRYOUT_DAYS.map(d=>'D'+d), 'Days', 'Tags','Notes']
@@ -279,7 +287,12 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const notes = pS.filter(s=>s.notes).map(s=>{const ev=evaluators.find(e=>e.id===s.evaluator_id);return(ev?.name||'?')+' (D'+s.day_number+'): '+s.notes}).join(' | ')
     // Attendance: a day that hasn't happened yet stays blank rather than
     // reading as an absence.
-    const att = TRYOUT_DAYS.map(d => d > currentDay ? '' : (attended(checkins, p.id, d) ? '✓' : '—'))
+    const joined = joinedDay(checkins, p.id)
+    const att = TRYOUT_DAYS.map(d => {
+      if (d > currentDay) return ''                       // day not reached
+      if (joined != null && d < joined) return '·'        // joined later — not an absence
+      return attended(checkins, p.id, d) ? '✓' : '—'
+    })
     const daysAttended = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year,
                   aG, aI, aT, gm.length, ...att, daysAttended, tags, notes]
@@ -409,8 +422,11 @@ function PlayerCheckIn({ onBack }) {
     if (!photo) return setError('Take a photo before submitting.')
     setError(''); setLoading(true)
     try {
+      // A pinnie number belongs to one player for the whole tryout — cut
+      // players keep theirs so the number always identifies the same person
+      // across all four days. Late arrivals get fresh numbers.
       const { data: existing } = await supabase.from('players').select('id').eq('pinnie_num', parseInt(num))
-      if (existing && existing.length > 0) { setError('Pinnie #'+num+' is already taken.'); setLoading(false); return }
+      if (existing && existing.length > 0) { setError('Pinnie #'+num+' is already taken. Grab a different pinnie.'); setLoading(false); return }
       const { data: player, error: insertErr } = await supabase.from('players').insert({
         first_name: first.trim(), last_name: last.trim(), pos1: form.pos1, pos2: form.pos2||'',
         year, pinnie_num: parseInt(num), phone: phone.trim(),
@@ -1151,24 +1167,30 @@ function EvalView({ evaluator, onLogout }) {
   }
 
   // Compact D1-D4 history so an absence is visible wherever a player is listed.
-  const AttendanceDots = ({ player }) => (
-    <span style={{ display:'inline-flex', gap:3, alignItems:'center' }}>
-      {TRYOUT_DAYS.map(d => {
-        const future = d > currentDay
-        const here = isCheckedIn(player.id, d)
-        return (
-          <span key={d} title={'Day '+d+(future?' — not yet':here?' — present':' — absent')}
-            style={{
-              width:13, height:13, borderRadius:3, fontSize:8, fontWeight:700,
-              display:'inline-flex', alignItems:'center', justifyContent:'center',
-              background: future ? 'transparent' : here ? G : '#3f1d1d',
-              border:'1px solid '+(future ? '#1e293b' : here ? G : '#7f1d1d'),
-              color: future ? '#334155' : here ? Y : '#fca5a5',
-            }}>{d}</span>
-        )
-      })}
-    </span>
-  )
+  const AttendanceDots = ({ player }) => {
+    const joined = joinedDay(checkins, player.id)
+    return (
+      <span style={{ display:'inline-flex', gap:3, alignItems:'center' }}>
+        {TRYOUT_DAYS.map(d => {
+          const future = d > currentDay
+          const preJoin = joined != null && d < joined
+          const here = isCheckedIn(player.id, d)
+          const dim = future || preJoin
+          return (
+            <span key={d} title={'Day '+d+(preJoin?' — joined on Day '+joined:future?' — not yet':here?' — present':' — absent')}
+              style={{
+                width:13, height:13, borderRadius:3, fontSize:8, fontWeight:700,
+                display:'inline-flex', alignItems:'center', justifyContent:'center',
+                background: dim ? 'transparent' : here ? G : '#3f1d1d',
+                border:'1px solid '+(dim ? '#1e293b' : here ? G : '#7f1d1d'),
+                color: dim ? '#334155' : here ? Y : '#fca5a5',
+              }}>{d}</span>
+          )
+        })}
+        {joined > 1 && <span style={{ fontSize:9, color:'#64748b', marginLeft:2 }}>joined D{joined}</span>}
+      </span>
+    )
+  }
 
   const submitScoreField = async (playerId, field, value) => {
     const existing = getScore(evaluator.id, playerId, currentDay)
@@ -1193,6 +1215,8 @@ function EvalView({ evaluator, onLogout }) {
     loadAll()
   }
   const uncutPlayer = async (playerId) => {
+    // Safe with no collision check: numbers are never reissued, so a
+    // reinstated player's pinnie is still theirs.
     await supabase.from('players').update({ status: 'active', cut_after_day: null }).eq('id', playerId)
     loadAll()
   }
