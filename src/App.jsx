@@ -329,6 +329,7 @@ const POS_TAGS = [
   // READS — game intelligence
   { label: 'Smart decisions',        short: 'Decisions',   val: '+decisions',    pos: true,  group: 'READS' },
   { label: 'Great positioning',      short: 'Position',    val: '+positioning',  pos: true,  group: 'READS' },
+  { label: 'Strong off-ball movement', short: 'Off-ball',  val: '+off_ball',     pos: true,  group: 'READS' },
   { label: 'Ball watches / static',  short: 'Static',      val: '-off_ball',     pos: false, group: 'READS' },
   { label: 'Out of position',        short: 'Out of Pos',  val: '-positioning',  pos: false, group: 'READS' },
 
