@@ -424,7 +424,9 @@ function PlayerCheckIn({ onBack }) {
     if (!phone.trim()) return setError('Enter your phone number.')
     if (!email.trim()) return setError('Enter your email address.')
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return setError('That email address doesn\'t look right.')
-    if (!photo) return setError('Take a photo before submitting.')
+    // The photo is not enforced. The form still presents it as expected — most
+    // players will take one — but a dead camera, a denied permission or a
+    // failing upload must never be the thing that stops someone checking in.
     setError(''); setLoading(true)
     try {
       // A pinnie number belongs to one player for the whole tryout — cut
@@ -445,12 +447,38 @@ function PlayerCheckIn({ onBack }) {
         console.warn('players.email column missing — saving without it:', insertErr.message)
         ;({ data: player, error: insertErr } = await supabase.from('players').insert(base).select().single())
       }
-      if (insertErr) throw insertErr
-      const photoUrl = await uploadPhoto(player.id, photoFile)
-      await supabase.from('players').update({ photo_url: photoUrl }).eq('id', player.id)
-      const { data: settings } = await supabase.from('app_settings').select('value').eq('key','current_day').single()
-      const currentDay = parseInt(settings?.value || '1')
-      await supabase.from('day_checkins').upsert({ player_id: player.id, day_number: currentDay, checked_in: true })
+      if (insertErr) {
+        // 23505 = unique violation. Two players can pass the "is this pinnie
+        // free?" check at the same instant, so the database is what actually
+        // settles it. Tell them plainly instead of showing a Postgres error.
+        if (insertErr.code === '23505' || /duplicate key|unique/i.test(insertErr.message||'')) {
+          setError('Pinnie #'+num+' was just taken by someone else. Grab a different pinnie and try again.')
+          setLoading(false); return
+        }
+        throw insertErr
+      }
+
+      // The player is now in the database. A failed photo upload must NOT send
+      // them back to the form — they'd hit "pinnie already taken" against their
+      // own row and be stuck. Field signal is unreliable; the photo is optional.
+      if (photoFile) {
+        try {
+          const photoUrl = await uploadPhoto(player.id, photoFile)
+          await supabase.from('players').update({ photo_url: photoUrl }).eq('id', player.id)
+        } catch (photoErr) {
+          console.warn('Photo upload failed; player is checked in without one:', photoErr)
+        }
+      }
+      // Same reasoning as the photo: the player row already exists, so a blip
+      // here must not bounce them back to a form that will reject their pinnie.
+      // Worst case the coach taps them present on the Roster tab.
+      try {
+        const { data: settings } = await supabase.from('app_settings').select('value').eq('key','current_day').single()
+        const currentDay = parseInt(settings?.value || '1')
+        await supabase.from('day_checkins').upsert({ player_id: player.id, day_number: currentDay, checked_in: true })
+      } catch (ciErr) {
+        console.warn('Check-in row failed; mark this player present manually:', ciErr)
+      }
       setSubmitted(true)
     } catch (err) { setError('Something went wrong: ' + err.message) }
     setLoading(false)
