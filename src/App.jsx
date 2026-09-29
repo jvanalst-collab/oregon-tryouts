@@ -45,6 +45,15 @@ const attended = (checkins, playerId, day) =>
 // The first day a player turned up. Someone who joins on Day 2 was never
 // expected on Day 1, so those earlier days are "not in the pool yet" rather
 // than absences — otherwise a late arrival looks like a no-show at cut time.
+// Attendance is three-state. checked_in answers "was he here"; excused only
+// explains a no, so a midterm doesn't look like a no-show at cut time.
+const attendanceState = (checkins, playerId, day) => {
+  const row = (checkins || []).find(c => c.player_id === playerId && c.day_number === day)
+  if (!row) return 'absent'
+  if (row.checked_in) return 'present'
+  return row.excused ? 'excused' : 'absent'
+}
+
 const joinedDay = (checkins, playerId) => {
   const days = (checkins || []).filter(c => c.player_id === playerId && c.checked_in).map(c => c.day_number)
   return days.length ? Math.min(...days) : null
@@ -320,7 +329,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // ═══ SHEET 3: SCORE SUMMARY ═══
   const ws3 = wb.addWorksheet('Score Summary')
   ws3.mergeCells(1, 1, 1, 15)
-  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4 attendance: ✓ present · — absent · \u00b7 joined later · blank = day not reached)'
+  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4: ✓ present · E excused · — absent · \u00b7 joined later · blank = day not reached)'
   ws3.getCell(1,1).font = f14b
   const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals',
                    ...TRYOUT_DAYS.map(d=>'D'+d), 'Days', 'Tags','Notes']
@@ -339,7 +348,8 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     const att = TRYOUT_DAYS.map(d => {
       if (d > currentDay) return ''                       // day not reached
       if (joined != null && d < joined) return '·'        // joined later — not an absence
-      return attended(checkins, p.id, d) ? '✓' : '—'
+      const st = attendanceState(checkins, p.id, d)
+      return st === 'present' ? '✓' : st === 'excused' ? 'E' : '—'
     })
     const daysAttended = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year,
@@ -356,19 +366,19 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
   // ═══ SHEET 4: PHONE LIST ═══
   const ws4 = wb.addWorksheet('Contact List')
-  ws4.mergeCells(1,1,1,6)
+  ws4.mergeCells(1,1,1,7)
   ws4.getCell(1,1).value = 'CONTACT LIST — DAY '+currentDay; ws4.getCell(1,1).font = f14b
-  ;['#','Name','Phone','Email','Position','Year'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  ;['#','Name','Phone','Email','Position','Year','Paid'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let pr = 4
   roster.forEach(p => {
-    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.email||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year]
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.email||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year, p.paid ? 'PAID' : '']
     vals.forEach((v,i) => {
       const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
       c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
     })
     pr++
   })
-  ;[8,32,20,38,20,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ;[8,32,20,38,20,10,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   const buffer = await wb.xlsx.writeBuffer()
@@ -1226,20 +1236,38 @@ function EvalView({ evaluator, onLogout }) {
 
   // ── HELPERS ──
   const [exportPresentOnly, setExportPresentOnly] = useState(false)
+  const [paidSearch, setPaidSearch] = useState('')
+  const [paidFilter, setPaidFilter] = useState('all')
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
 
-  const toggleCheckin = async (playerId, day) => {
+  // Tap cycles present -> absent -> excused -> present. Most players are
+  // present, so the common path is one tap off "All present"; the second tap
+  // is only for the handful who told you they couldn't make it.
+  const cycleCheckin = async (playerId, day) => {
     if (String(playerId).startsWith('demo-')) return // demo players can't be modified
     const existing = dbCheckins.find(c => c.player_id === playerId && c.day_number === day)
-    if (existing) { await supabase.from('day_checkins').update({ checked_in: !existing.checked_in }).eq('id', existing.id) }
-    else { await supabase.from('day_checkins').insert({ player_id: playerId, day_number: day, checked_in: true }) }
+    const state = attendanceState(dbCheckins, playerId, day)
+    const next = state === 'present' ? { checked_in:false, excused:false }
+               : state === 'absent'  ? { checked_in:false, excused:true }
+               :                       { checked_in:true,  excused:false }
+    if (existing) await supabase.from('day_checkins').update(next).eq('id', existing.id)
+    else await supabase.from('day_checkins').insert({ player_id: playerId, day_number: day, ...next })
     loadAll()
   }
 
-  const presentCount = useMemo(() => activePlayers.filter(p => isCheckedIn(p.id, currentDay)).length, [activePlayers, isCheckedIn, currentDay])
-  const absentCount = activePlayers.length - presentCount
+  const togglePaid = async (playerId) => {
+    if (String(playerId).startsWith('demo-')) return
+    const p = players.find(x => x.id === playerId)
+    await supabase.from('players').update({ paid: !p?.paid }).eq('id', playerId)
+    loadAll()
+  }
+
+  const presentCount = useMemo(() => activePlayers.filter(p => attendanceState(checkins, p.id, currentDay) === 'present').length, [activePlayers, checkins, currentDay])
+  const excusedCount = useMemo(() => activePlayers.filter(p => attendanceState(checkins, p.id, currentDay) === 'excused').length, [activePlayers, checkins, currentDay])
+  const absentCount = activePlayers.length - presentCount - excusedCount
+  const paidCount = useMemo(() => activePlayers.filter(p => p.paid).length, [activePlayers])
 
   // Bulk attendance for the current day. Real players only — demo rows are
   // display-only and never hit the database.
@@ -1249,11 +1277,11 @@ function EvalView({ evaluator, onLogout }) {
     const toInsert = [], toUpdate = []
     real.forEach(p => {
       const row = existing.get(p.id)
-      if (!row) { if (present) toInsert.push({ player_id: p.id, day_number: currentDay, checked_in: true }) }
-      else if (row.checked_in !== present) toUpdate.push(row.id)
+      if (!row) { if (present) toInsert.push({ player_id: p.id, day_number: currentDay, checked_in: true, excused: false }) }
+      else if (row.checked_in !== present || row.excused) toUpdate.push(row.id)
     })
     if (toInsert.length) await supabase.from('day_checkins').insert(toInsert)
-    if (toUpdate.length) await supabase.from('day_checkins').update({ checked_in: present }).in('id', toUpdate)
+    if (toUpdate.length) await supabase.from('day_checkins').update({ checked_in: present, excused: false }).in('id', toUpdate)
     loadAll()
   }
 
@@ -1265,17 +1293,20 @@ function EvalView({ evaluator, onLogout }) {
         {TRYOUT_DAYS.map(d => {
           const future = d > currentDay
           const preJoin = joined != null && d < joined
-          const here = isCheckedIn(player.id, d)
+          const st = attendanceState(checkins, player.id, d)
           const dim = future || preJoin
+          const label = preJoin ? ' — joined on Day '+joined : future ? ' — not yet'
+                      : st === 'present' ? ' — present' : st === 'excused' ? ' — excused' : ' — absent'
+          const bg = dim ? 'transparent' : st === 'present' ? G : st === 'excused' ? '#7c4a03' : '#3f1d1d'
+          const bd = dim ? '#1e293b'     : st === 'present' ? G : st === 'excused' ? '#b45309' : '#7f1d1d'
+          const fg = dim ? '#334155'     : st === 'present' ? Y : st === 'excused' ? '#fcd34d' : '#fca5a5'
           return (
-            <span key={d} title={'Day '+d+(preJoin?' — joined on Day '+joined:future?' — not yet':here?' — present':' — absent')}
+            <span key={d} title={'Day '+d+label}
               style={{
                 width:13, height:13, borderRadius:3, fontSize:8, fontWeight:700,
                 display:'inline-flex', alignItems:'center', justifyContent:'center',
-                background: dim ? 'transparent' : here ? G : '#3f1d1d',
-                border:'1px solid '+(dim ? '#1e293b' : here ? G : '#7f1d1d'),
-                color: dim ? '#334155' : here ? Y : '#fca5a5',
-              }}>{d}</span>
+                background:bg, border:'1px solid '+bd, color:fg,
+              }}>{st === 'excused' && !dim ? 'E' : d}</span>
           )
         })}
         {joined > 1 && <span style={{ fontSize:9, color:'#64748b', marginLeft:2 }}>joined D{joined}</span>}
@@ -1467,10 +1498,11 @@ function EvalView({ evaluator, onLogout }) {
         <div style={{ padding:16 }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8, gap:8 }}>
             <div>
-              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Attendance — tap to toggle</div>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Attendance — tap cycles present / absent / excused</div>
               <div style={{ color:Y, fontSize:12, fontWeight:600, marginTop:2 }}>
                 {presentCount} of {activePlayers.length} present
                 {absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
+                {excusedCount > 0 && <span style={{ color:'#fcd34d', fontWeight:500 }}> · {excusedCount} excused</span>}
               </div>
             </div>
             {activePlayers.length > 0 && (
@@ -1509,21 +1541,25 @@ function EvalView({ evaluator, onLogout }) {
           {activePlayers.length===0 ? emptyState('📋','No players checked in yet.') : (
             <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
               {activePlayers.map(p => {
-                const ci = isCheckedIn(p.id, currentDay)
+                const st = attendanceState(checkins, p.id, currentDay)
+                const ci = st === 'present'
+                const exc = st === 'excused'
+                const edge = ci ? G : exc ? '#b45309' : '#334155'
                 return (
-                  <button key={p.id} onClick={()=>toggleCheckin(p.id,currentDay)} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:10, border:'none', background:ci?G+'20':'#0f172a', cursor:'pointer', textAlign:'left', width:'100%', borderLeft:'4px solid '+(ci?G:'#334155') }}>
+                  <button key={p.id} onClick={()=>cycleCheckin(p.id,currentDay)} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:10, border:'none', background:ci?G+'20':exc?'#b4530920':'#0f172a', cursor:'pointer', textAlign:'left', width:'100%', borderLeft:'4px solid '+edge }}>
                     <PlayerPhoto player={p} size={42} />
                     <div style={{ flex:1 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:5 }}>
                         <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{p.pinnie_num}</span>
-                        <span style={{ color:ci?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
+                        <span style={{ color:ci||exc?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
+                        {p.paid && <span title="Entry fee paid" style={{ fontSize:9, fontWeight:700, color:'#10b981', background:'#064e3b', border:'1px solid #10b981', borderRadius:3, padding:'0 4px' }}>PAID</span>}
                       </div>
                       <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:2 }}>
                         <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</span>
                         <AttendanceDots player={p} />
                       </div>
                     </div>
-                    <div style={{ width:26, height:26, borderRadius:6, background:ci?G:'#1e293b', border:'2px solid '+(ci?Y:'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:Y, fontSize:14, fontWeight:700 }}>{ci?'✓':''}</div>
+                    <div style={{ width:26, height:26, borderRadius:6, background:ci?G:exc?'#b45309':'#1e293b', border:'2px solid '+(ci?Y:exc?'#fcd34d':'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:ci?Y:'#fef3c7', fontSize:ci?14:11, fontWeight:700 }}>{ci?'✓':exc?'E':''}</div>
                   </button>
                 )
               })}
@@ -1805,6 +1841,46 @@ function EvalView({ evaluator, onLogout }) {
                 <div style={{ fontFamily:"'Geo',sans-serif", fontSize:16, fontWeight:700, color:Y, background:G, padding:'2px 10px', borderRadius:6, letterSpacing:1 }}>{ev.access_code}</div>
               </div>
             ))}
+          </div>
+
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
+            <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:8, marginBottom:4 }}>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Entry Fee</div>
+              <div style={{ color:'#10b981', fontSize:13, fontWeight:700, fontVariantNumeric:'tabular-nums' }}>
+                {paidCount} / {activePlayers.length} paid
+              </div>
+            </div>
+            <div style={{ color:'#64748b', fontSize:12, marginBottom:10 }}>Tap a name to mark paid. Cut players drop off this list.</div>
+            <input type="text" id="paid-search" placeholder="Search name or #..." value={paidSearch}
+              onChange={e=>setPaidSearch(e.target.value)}
+              style={{ ...input, padding:'7px 10px', fontSize:13, marginBottom:10 }} />
+            <div style={{ display:'flex', gap:5, marginBottom:10, flexWrap:'wrap' }}>
+              {[['all','All'],['unpaid','Unpaid'],['paid','Paid']].map(([k,l])=>(
+                <button key={k} onClick={()=>setPaidFilter(k)} style={{
+                  padding:'3px 9px', borderRadius:6, border:'1px solid '+(paidFilter===k?Y+'60':'#1e293b'),
+                  background:paidFilter===k?'#1e293b':'transparent', color:paidFilter===k?Y:'#475569',
+                  fontSize:10, fontWeight:600, cursor:'pointer' }}>{l}</button>
+              ))}
+            </div>
+            <div style={{ maxHeight:340, overflowY:'auto' }}>
+              {activePlayers
+                .filter(p => paidFilter==='all' || (paidFilter==='paid' ? p.paid : !p.paid))
+                .filter(p => { const q=paidSearch.trim().toLowerCase(); if(!q) return true
+                  return (p.first_name+' '+p.last_name).toLowerCase().includes(q) || String(p.pinnie_num).includes(q) })
+                .map(p => (
+                <button key={p.id} onClick={()=>togglePaid(p.id)} style={{
+                  display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
+                  padding:'8px 10px', marginBottom:4, borderRadius:8, cursor:'pointer',
+                  border:'1px solid '+(p.paid?'#10b981':'#1e293b'),
+                  background:p.paid?'#064e3b40':'transparent' }}>
+                  <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:p.paid?'#10b981':Y, minWidth:28 }}>#{p.pinnie_num}</span>
+                  <span style={{ flex:1, color:p.paid?'#e2e8f0':'#94a3b8', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
+                  <span style={{ width:24, height:24, borderRadius:5, flexShrink:0,
+                    background:p.paid?'#10b981':'#1e293b', border:'2px solid '+(p.paid?'#10b981':'#334155'),
+                    display:'flex', alignItems:'center', justifyContent:'center', color:'#04120c', fontSize:13, fontWeight:700 }}>{p.paid?'$':''}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           <div style={{ background:'#0f172a', borderRadius:12, padding:16 }}>
