@@ -1236,8 +1236,8 @@ function EvalView({ evaluator, onLogout }) {
 
   // ── HELPERS ──
   const [exportPresentOnly, setExportPresentOnly] = useState(false)
-  const [paidSearch, setPaidSearch] = useState('')
-  const [paidFilter, setPaidFilter] = useState('all')
+  const [rosterSearch, setRosterSearch] = useState('')
+  const [rosterUnpaidOnly, setRosterUnpaidOnly] = useState(false)
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
@@ -1254,6 +1254,31 @@ function EvalView({ evaluator, onLogout }) {
                :                       { checked_in:true,  excused:false }
     if (existing) await supabase.from('day_checkins').update(next).eq('id', existing.id)
     else await supabase.from('day_checkins').insert({ player_id: playerId, day_number: day, ...next })
+    loadAll()
+  }
+
+  // Paper numbers get lost and torn. Scores and attendance key off the player's
+  // internal id, never the pinnie number, so renumbering carries every score,
+  // tag, note and check-in with it — nothing is orphaned.
+  const changePinnie = async (playerId) => {
+    if (String(playerId).startsWith('demo-')) return
+    const p = players.find(x => x.id === playerId)
+    if (!p) return
+    const raw = prompt('New number for ' + p.first_name + ' ' + p.last_name + ' (currently #' + p.pinnie_num + '):')
+    if (raw === null) return
+    const num = parseInt(String(raw).trim(), 10)
+    if (!Number.isInteger(num) || num <= 0) { alert('Enter a whole number.'); return }
+    if (num === p.pinnie_num) return
+    const clash = players.find(x => x.id !== playerId && x.pinnie_num === num)
+    if (clash) {
+      alert('#' + num + ' belongs to ' + clash.first_name + ' ' + clash.last_name +
+            (clash.status === 'cut' ? ' (cut on Day ' + clash.cut_after_day + ')' : '') + '. Pick another number.')
+      return
+    }
+    if (!confirm('Change ' + p.first_name + ' ' + p.last_name + ' from #' + p.pinnie_num + ' to #' + num + '?\n\n' +
+                 'All of his scores and attendance follow him. Printed sheets still say #' + p.pinnie_num + ', so re-export before the next round.')) return
+    const { error } = await supabase.from('players').update({ pinnie_num: num }).eq('id', playerId)
+    if (error) { alert('Could not change the number: ' + error.message); return }
     loadAll()
   }
 
@@ -1503,6 +1528,7 @@ function EvalView({ evaluator, onLogout }) {
                 {presentCount} of {activePlayers.length} present
                 {absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
                 {excusedCount > 0 && <span style={{ color:'#fcd34d', fontWeight:500 }}> · {excusedCount} excused</span>}
+                {activePlayers.length - paidCount > 0 && <span style={{ color:'#f87171', fontWeight:500 }}> · {activePlayers.length - paidCount} unpaid</span>}
               </div>
             </div>
             {activePlayers.length > 0 && (
@@ -1526,6 +1552,19 @@ function EvalView({ evaluator, onLogout }) {
               ))}
             </div>
 
+            {/* The roster tab is the check-in table, so finding one man in 71 has to be fast */}
+            <div style={{ display:'flex', gap:6, marginBottom:8 }}>
+              <input type="text" id="roster-search" placeholder="Search name or #..." value={rosterSearch}
+                onChange={e=>setRosterSearch(e.target.value)}
+                style={{ ...input, padding:'8px 12px', fontSize:14 }} />
+              <button onClick={()=>setRosterUnpaidOnly(!rosterUnpaidOnly)} style={{
+                padding:'8px 12px', borderRadius:8, border:'1px solid '+(rosterUnpaidOnly?'#f87171':'#334155'),
+                background:rosterUnpaidOnly?'#7f1d1d':'#0f172a', color:rosterUnpaidOnly?'#fecaca':'#64748b',
+                fontSize:11, fontWeight:600, cursor:'pointer', whiteSpace:'nowrap', flexShrink:0 }}>
+                {rosterUnpaidOnly?'Unpaid':'All'}
+              </button>
+            </div>
+
             {/* Bulk attendance — most players show up, so marking the exceptions is faster */}
             <div style={{ display:'flex', gap:6, marginBottom:10 }}>
               <button onClick={()=>{if(confirm('Mark all '+activePlayers.length+' players present for Day '+currentDay+'?'))setAllPresent(true)}}
@@ -1540,27 +1579,47 @@ function EvalView({ evaluator, onLogout }) {
           </>)}
           {activePlayers.length===0 ? emptyState('📋','No players checked in yet.') : (
             <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
-              {activePlayers.map(p => {
+              {activePlayers
+                .filter(p => !rosterUnpaidOnly || !p.paid)
+                .filter(p => { const q = rosterSearch.trim().toLowerCase(); if (!q) return true
+                  return (p.first_name+' '+p.last_name).toLowerCase().includes(q) || String(p.pinnie_num).includes(q) })
+                .map(p => {
                 const st = attendanceState(checkins, p.id, currentDay)
                 const ci = st === 'present'
                 const exc = st === 'excused'
                 const edge = ci ? G : exc ? '#b45309' : '#334155'
+                // A row, not a button: the number badge and the paid chip are
+                // their own tap targets, and a button inside a button is invalid.
                 return (
-                  <button key={p.id} onClick={()=>cycleCheckin(p.id,currentDay)} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 12px', borderRadius:10, border:'none', background:ci?G+'20':exc?'#b4530920':'#0f172a', cursor:'pointer', textAlign:'left', width:'100%', borderLeft:'4px solid '+edge }}>
-                    <PlayerPhoto player={p} size={42} />
-                    <div style={{ flex:1 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-                        <span style={{ fontFamily:"'Geo',sans-serif", fontSize:13, fontWeight:700, color:Y, background:G, padding:'0 5px', borderRadius:3 }}>#{p.pinnie_num}</span>
-                        <span style={{ color:ci||exc?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
-                        {p.paid && <span title="Entry fee paid" style={{ fontSize:9, fontWeight:700, color:'#10b981', background:'#064e3b', border:'1px solid #10b981', borderRadius:3, padding:'0 4px' }}>PAID</span>}
+                  <div key={p.id} style={{ display:'flex', alignItems:'stretch', gap:6, borderRadius:10, background:ci?G+'20':exc?'#b4530920':'#0f172a', borderLeft:'4px solid '+edge, overflow:'hidden' }}>
+
+                    <button onClick={()=>changePinnie(p.id)} title="Tap to change this number"
+                      style={{ border:'none', background:'transparent', cursor:'pointer', padding:'8px 0 8px 10px', display:'flex', alignItems:'center', flexShrink:0 }}>
+                      <span style={{ fontFamily:"'Geo',sans-serif", fontSize:14, fontWeight:700, color:Y, background:G, padding:'3px 6px', borderRadius:4, border:'1px dashed '+Y+'55' }}>#{p.pinnie_num}</span>
+                    </button>
+
+                    <button onClick={()=>cycleCheckin(p.id,currentDay)}
+                      style={{ flex:1, minWidth:0, display:'flex', alignItems:'center', gap:9, padding:'8px 4px', border:'none', background:'transparent', cursor:'pointer', textAlign:'left' }}>
+                      <PlayerPhoto player={p} size={40} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ color:ci||exc?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.first_name} {p.last_name}</div>
+                        <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:2 }}>
+                          <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</span>
+                          <AttendanceDots player={p} />
+                        </div>
                       </div>
-                      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:2 }}>
-                        <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</span>
-                        <AttendanceDots player={p} />
-                      </div>
-                    </div>
-                    <div style={{ width:26, height:26, borderRadius:6, background:ci?G:exc?'#b45309':'#1e293b', border:'2px solid '+(ci?Y:exc?'#fcd34d':'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:ci?Y:'#fef3c7', fontSize:ci?14:11, fontWeight:700 }}>{ci?'✓':exc?'E':''}</div>
-                  </button>
+                      <div style={{ width:26, height:26, borderRadius:6, flexShrink:0, background:ci?G:exc?'#b45309':'#1e293b', border:'2px solid '+(ci?Y:exc?'#fcd34d':'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:ci?Y:'#fef3c7', fontSize:ci?14:11, fontWeight:700 }}>{ci?'✓':exc?'E':''}</div>
+                    </button>
+
+                    <button onClick={()=>togglePaid(p.id)} title={p.paid?'Paid — tap if he still owes':'Owes the entry fee — tap when paid'}
+                      style={{ width:52, flexShrink:0, border:'none', borderLeft:'1px solid #1e293b', cursor:'pointer',
+                        background:p.paid?'#064e3b60':'#7f1d1d60', color:p.paid?'#6ee7b7':'#fca5a5',
+                        fontSize:9, fontWeight:700, letterSpacing:.5, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1 }}>
+                      <span style={{ fontSize:13 }}>{p.paid?'$':'—'}</span>
+                      <span>{p.paid?'PAID':'OWES'}</span>
+                    </button>
+
+                  </div>
                 )
               })}
             </div>
@@ -1841,46 +1900,6 @@ function EvalView({ evaluator, onLogout }) {
                 <div style={{ fontFamily:"'Geo',sans-serif", fontSize:16, fontWeight:700, color:Y, background:G, padding:'2px 10px', borderRadius:6, letterSpacing:1 }}>{ev.access_code}</div>
               </div>
             ))}
-          </div>
-
-          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
-            <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:8, marginBottom:4 }}>
-              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Entry Fee</div>
-              <div style={{ color:'#10b981', fontSize:13, fontWeight:700, fontVariantNumeric:'tabular-nums' }}>
-                {paidCount} / {activePlayers.length} paid
-              </div>
-            </div>
-            <div style={{ color:'#64748b', fontSize:12, marginBottom:10 }}>Tap a name to mark paid. Cut players drop off this list.</div>
-            <input type="text" id="paid-search" placeholder="Search name or #..." value={paidSearch}
-              onChange={e=>setPaidSearch(e.target.value)}
-              style={{ ...input, padding:'7px 10px', fontSize:13, marginBottom:10 }} />
-            <div style={{ display:'flex', gap:5, marginBottom:10, flexWrap:'wrap' }}>
-              {[['all','All'],['unpaid','Unpaid'],['paid','Paid']].map(([k,l])=>(
-                <button key={k} onClick={()=>setPaidFilter(k)} style={{
-                  padding:'3px 9px', borderRadius:6, border:'1px solid '+(paidFilter===k?Y+'60':'#1e293b'),
-                  background:paidFilter===k?'#1e293b':'transparent', color:paidFilter===k?Y:'#475569',
-                  fontSize:10, fontWeight:600, cursor:'pointer' }}>{l}</button>
-              ))}
-            </div>
-            <div style={{ maxHeight:340, overflowY:'auto' }}>
-              {activePlayers
-                .filter(p => paidFilter==='all' || (paidFilter==='paid' ? p.paid : !p.paid))
-                .filter(p => { const q=paidSearch.trim().toLowerCase(); if(!q) return true
-                  return (p.first_name+' '+p.last_name).toLowerCase().includes(q) || String(p.pinnie_num).includes(q) })
-                .map(p => (
-                <button key={p.id} onClick={()=>togglePaid(p.id)} style={{
-                  display:'flex', alignItems:'center', gap:10, width:'100%', textAlign:'left',
-                  padding:'8px 10px', marginBottom:4, borderRadius:8, cursor:'pointer',
-                  border:'1px solid '+(p.paid?'#10b981':'#1e293b'),
-                  background:p.paid?'#064e3b40':'transparent' }}>
-                  <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:p.paid?'#10b981':Y, minWidth:28 }}>#{p.pinnie_num}</span>
-                  <span style={{ flex:1, color:p.paid?'#e2e8f0':'#94a3b8', fontSize:13, fontWeight:600 }}>{p.first_name} {p.last_name}</span>
-                  <span style={{ width:24, height:24, borderRadius:5, flexShrink:0,
-                    background:p.paid?'#10b981':'#1e293b', border:'2px solid '+(p.paid?'#10b981':'#334155'),
-                    display:'flex', alignItems:'center', justifyContent:'center', color:'#04120c', fontSize:13, fontWeight:700 }}>{p.paid?'$':''}</span>
-                </button>
-              ))}
-            </div>
           </div>
 
           <div style={{ background:'#0f172a', borderRadius:12, padding:16 }}>
