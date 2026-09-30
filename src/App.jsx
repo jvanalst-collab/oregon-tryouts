@@ -1269,6 +1269,19 @@ function EvalView({ evaluator, onLogout }) {
   const absentCount = activePlayers.length - presentCount - excusedCount
   const paidCount = useMemo(() => activePlayers.filter(p => p.paid).length, [activePlayers])
 
+  // Keeper / field split for the top of the Roster tab. Anyone who listed GK in
+  // either position slot is counted as a keeper ONLY — never also as a field
+  // player — so fieldTotal + gkTotal always equals the squad.
+  const squadCounts = useMemo(() => {
+    const here = p => attendanceState(checkins, p.id, currentDay) === 'present'
+    const gk = activePlayers.filter(isGK)
+    const field = activePlayers.filter(p => !isGK(p))
+    return {
+      gkTotal: gk.length,       gkIn: gk.filter(here).length,
+      fieldTotal: field.length, fieldIn: field.filter(here).length,
+    }
+  }, [activePlayers, checkins, currentDay])
+
   // Bulk attendance for the current day. Real players only — demo rows are
   // display-only and never hit the database.
   const setAllPresent = async (present) => {
@@ -1496,6 +1509,25 @@ function EvalView({ evaluator, onLogout }) {
       {/* ══ ROSTER TAB ══ */}
       {view === 'roster' && (
         <div style={{ padding:16 }}>
+          {/* Squad split — the first number you need when you're building teams on
+              the touchline. Big number is who's here today, small number is who's
+              still in the tryout. Keepers never appear in the field-player count. */}
+          <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+            {[
+              ['Field players', squadCounts.fieldIn, squadCounts.fieldTotal, Y],
+              ['Goalkeepers',   squadCounts.gkIn,    squadCounts.gkTotal,    '#7dd3fc'],
+            ].map(([label, hereNow, total, color]) => (
+              <div key={label} style={{ flex:1, minWidth:0, background:'#0f172a', border:'1px solid #1e293b', borderRadius:10, padding:'9px 12px' }}>
+                <div style={{ color:'#64748b', fontSize:10, textTransform:'uppercase', letterSpacing:1, fontWeight:600 }}>{label}</div>
+                <div style={{ display:'flex', alignItems:'baseline', gap:5, marginTop:3 }}>
+                  <span style={{ color, fontSize:27, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{hereNow}</span>
+                  <span style={{ color:'#475569', fontSize:14, fontWeight:600 }}>/ {total}</span>
+                </div>
+                <div style={{ color:'#475569', fontSize:10, marginTop:2 }}>here Day {currentDay} / still in</div>
+              </div>
+            ))}
+          </div>
+
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8, gap:8 }}>
             <div>
               <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Attendance — tap cycles present / absent / excused</div>
