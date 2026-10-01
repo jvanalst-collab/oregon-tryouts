@@ -340,21 +340,60 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   })
   ;[8,35,22,10,13,13,13,10,7,7,7,7,9,50,70].forEach((w,i) => ws3.getColumn(i+1).width = w)
 
-  // ═══ SHEET 4: PHONE LIST ═══
+  // ═══ SHEET 4: CONTACT LIST ═══
+  // Built to be used, not just read. The two blocks at the top are a ready-made
+  // BCC line and a ready-made group-text line for the men who actually turned
+  // up today — click the cell, copy out of the formula bar, paste into Mail or
+  // Messages. That is the thing you want at 9pm on a cut night.
   const ws4 = wb.addWorksheet('Contact List')
-  ws4.mergeCells(1,1,1,7)
-  ws4.getCell(1,1).value = 'CONTACT LIST — DAY '+currentDay; ws4.getCell(1,1).font = f14b
-  ;['#','Name','Phone','Email','Position','Year','Paid'].forEach((h,i) => { const c = ws4.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
-  let pr = 4
+  const presentToday = roster.filter(p => attended(checkins, p.id, currentDay))
+  ws4.mergeCells(1,1,1,8)
+  ws4.getCell(1,1).value = 'CONTACT LIST — DAY '+currentDay+'   ('+roster.length+' listed · '+presentToday.length+' present today)'
+  ws4.getCell(1,1).font = f14b
+
+  // Phones come in however they were typed. Strip to digits for the text-app
+  // paste, and render a readable form in the table.
+  const digitsOf = s => String(s||'').replace(/\D/g,'')
+  const prettyPhone = s => {
+    const d = digitsOf(s)
+    if (d.length === 10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6)
+    if (d.length === 11 && d[0] === '1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7)
+    return s || ''
+  }
+  const bccLine  = presentToday.map(p => p.email).filter(Boolean).join('; ')
+  const textLine = presentToday.map(p => digitsOf(p.phone)).filter(d => d.length >= 10).join(', ')
+  ;[['EMAILS — present Day '+currentDay+'  (paste into BCC)', bccLine || '— no emails on file —'],
+    ['PHONES — present Day '+currentDay+'  (paste into a group text)', textLine || '— no phone numbers on file —'],
+  ].forEach(([label, value], i) => {
+    const lr = 3 + i*2
+    ws4.mergeCells(lr,1,lr,8)
+    const lc = ws4.getCell(lr,1); lc.value = label; lc.font = { ...f14b, size:11 }; lc.fill = hdrFill
+    ws4.mergeCells(lr+1,1,lr+1,8)
+    const vc = ws4.getCell(lr+1,1); vc.value = value; vc.font = { ...f14, size:10 }
+    vc.alignment = leftMid; vc.border = thinBorder
+    ws4.getRow(lr+1).height = 20
+  })
+
+  const cHdrs = ['#','Name','Phone','Email','Position','Year','Day '+currentDay,'Paid']
+  cHdrs.forEach((h,i) => { const c = ws4.getCell(8,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  let pr = 9
   roster.forEach(p => {
-    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.phone||'', p.email||'', p.pos1+(p.pos2?', '+p.pos2:''), p.year, p.paid ? 'PAID' : '']
+    const st = attendanceState(checkins, p.id, currentDay)
+    const vals = [p.pinnie_num, p.first_name+' '+p.last_name, prettyPhone(p.phone), p.email||'',
+                  p.pos1+(p.pos2?', '+p.pos2:''), p.year,
+                  st === 'present' ? '✓' : st === 'excused' ? 'E' : '—',
+                  p.paid ? 'PAID' : '']
     vals.forEach((v,i) => {
       const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
       c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
+      if (i===6 && v === '—') c.font = { ...f14, color:{ argb:'FF922B21' } }
+      if (i===7 && !v)        c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
     })
     pr++
   })
-  ;[8,32,20,38,20,10,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ws4.autoFilter = { from:{ row:8, column:1 }, to:{ row:Math.max(8,pr-1), column:8 } }
+  ws4.views = [{ state:'frozen', ySplit:8 }]
+  ;[8,32,18,38,20,10,12,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   const buffer = await wb.xlsx.writeBuffer()
@@ -1272,13 +1311,20 @@ function EvalView({ evaluator, onLogout }) {
   // Keeper / field split for the top of the Roster tab. Anyone who listed GK in
   // either position slot is counted as a keeper ONLY — never also as a field
   // player — so fieldTotal + gkTotal always equals the squad.
+  // Excused men are pulled out of the denominator, so "expected" is who should
+  // physically be on the grass tonight and the gap to "here" is who is missing
+  // without a reason.
   const squadCounts = useMemo(() => {
-    const here = p => attendanceState(checkins, p.id, currentDay) === 'present'
-    const gk = activePlayers.filter(isGK)
-    const field = activePlayers.filter(p => !isGK(p))
+    const tally = (group) => {
+      const st = p => attendanceState(checkins, p.id, currentDay)
+      const here = group.filter(p => st(p) === 'present').length
+      const excused = group.filter(p => st(p) === 'excused').length
+      const expected = group.length - excused
+      return { total: group.length, here, excused, expected, missing: expected - here }
+    }
     return {
-      gkTotal: gk.length,       gkIn: gk.filter(here).length,
-      fieldTotal: field.length, fieldIn: field.filter(here).length,
+      field: tally(activePlayers.filter(p => !isGK(p))),
+      gk: tally(activePlayers.filter(isGK)),
     }
   }, [activePlayers, checkins, currentDay])
 
@@ -1510,20 +1556,29 @@ function EvalView({ evaluator, onLogout }) {
       {view === 'roster' && (
         <div style={{ padding:16 }}>
           {/* Squad split — the first number you need when you're building teams on
-              the touchline. Big number is who's here today, small number is who's
-              still in the tryout. Keepers never appear in the field-player count. */}
+              the touchline. Big number is who's here, denominator is who was
+              expected once excused men are taken out, so the shortfall underneath
+              is who is genuinely unaccounted for. Keepers never appear in the
+              field-player count. */}
           <div style={{ display:'flex', gap:8, marginBottom:12 }}>
             {[
-              ['Field players', squadCounts.fieldIn, squadCounts.fieldTotal, Y],
-              ['Goalkeepers',   squadCounts.gkIn,    squadCounts.gkTotal,    '#7dd3fc'],
-            ].map(([label, hereNow, total, color]) => (
+              ['Field players', squadCounts.field, Y],
+              ['Goalkeepers',   squadCounts.gk,    '#7dd3fc'],
+            ].map(([label, c, color]) => (
               <div key={label} style={{ flex:1, minWidth:0, background:'#0f172a', border:'1px solid #1e293b', borderRadius:10, padding:'9px 12px' }}>
                 <div style={{ color:'#64748b', fontSize:10, textTransform:'uppercase', letterSpacing:1, fontWeight:600 }}>{label}</div>
                 <div style={{ display:'flex', alignItems:'baseline', gap:5, marginTop:3 }}>
-                  <span style={{ color, fontSize:27, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{hereNow}</span>
-                  <span style={{ color:'#475569', fontSize:14, fontWeight:600 }}>/ {total}</span>
+                  <span style={{ color, fontSize:27, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{c.here}</span>
+                  <span style={{ color:'#475569', fontSize:14, fontWeight:600 }}>/ {c.expected}</span>
                 </div>
-                <div style={{ color:'#475569', fontSize:10, marginTop:2 }}>here Day {currentDay} / still in</div>
+                <div style={{ color:'#475569', fontSize:10, marginTop:2 }}>here / expected Day {currentDay}</div>
+                {(c.missing > 0 || c.excused > 0) && (
+                  <div style={{ fontSize:10, fontWeight:700, marginTop:3 }}>
+                    {c.missing > 0 && <span style={{ color:'#fca5a5' }}>{c.missing} missing</span>}
+                    {c.missing > 0 && c.excused > 0 && <span style={{ color:'#334155' }}> · </span>}
+                    {c.excused > 0 && <span style={{ color:'#fcd34d' }}>{c.excused} excused</span>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
