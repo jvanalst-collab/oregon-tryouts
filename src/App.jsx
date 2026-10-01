@@ -39,6 +39,14 @@ const POS_LIST_GROUPS = [
 
 // ── EXCEL EXPORT ──
 const TRYOUT_DAYS = [1, 2, 3, 4]
+
+// Day 5 is not a session. It is where the app lands once Day 4 cuts are in:
+// the squad you kept. Nobody checks in, nobody is scored, and the export turns
+// from an evaluation pack into a roster.
+const SQUAD_DAY = 5
+const DAYS_AND_SQUAD = [...TRYOUT_DAYS, SQUAD_DAY]
+const dayLabel = d => d === SQUAD_DAY ? 'Final Squad' : 'Day ' + d
+const dayPill  = d => d === SQUAD_DAY ? 'SQUAD' : 'D' + d
 const attended = (checkins, playerId, day) =>
   !!(checkins || []).find(c => c.player_id === playerId && c.day_number === day && c.checked_in)
 
@@ -78,9 +86,13 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // "active" already excludes anyone cut on an earlier day, so the post-cuts
   // sheet is just every active player.
   const active = players.filter(p => p.status === 'active').sort((a,b) => a.pinnie_num - b.pinnie_num)
-  const roster = presentOnly
+  // On the squad day there is no session to be present at, so the filter is
+  // meaningless — the squad is simply everyone still standing.
+  const isSquadDay = currentDay === SQUAD_DAY
+  const roster = (presentOnly && !isSquadDay)
     ? active.filter(p => attended(checkins, p.id, currentDay))
     : active
+  const DAY_TITLE = isSquadDay ? 'FINAL SQUAD' : 'DAY ' + currentDay
 
   // Two rows per player: the positives, then the negatives in the same order.
   const outfieldPos = POS_TAGS.filter(t => t.pos), outfieldNeg = POS_TAGS.filter(t => !t.pos)
@@ -128,6 +140,49 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
   const wb = new ExcelJS.Workbook()
 
+  // ═══ SHEET 0: FINAL SQUAD ═══  (squad day only — leads the workbook)
+  // The team you kept, with a face against every name and everything you need
+  // to contact them. No blank columns: nobody is being graded any more.
+  if (isSquadDay) {
+    const wsq = wb.addWorksheet('Final Squad')
+    wsq.pageSetup.orientation = 'portrait'
+    wsq.pageSetup.fitToPage = true; wsq.pageSetup.fitToWidth = 1; wsq.pageSetup.fitToHeight = 0
+    wsq.pageSetup.printTitlesRow = '3:3'
+    wsq.mergeCells(1,1,1,9)
+    wsq.getCell(1,1).value = 'OREGON CLUB SOCCER — FINAL SQUAD   ('+roster.length+' players)'
+    wsq.getCell(1,1).font = { name:'Arial', size:16, bold:true }
+    wsq.getRow(1).height = 24
+    ;['Photo','#','Name','Position','Year','Phone','Email','Days','Paid'].forEach((h,i) => {
+      const c = wsq.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr
+    })
+    const digitsSq = s => String(s||'').replace(/\D/g,'')
+    const phoneSq = s => { const d = digitsSq(s)
+      if (d.length === 10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6)
+      if (d.length === 11 && d[0] === '1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7)
+      return s || '' }
+    let qr = 4
+    roster.forEach(p => {
+      const days = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
+      const vals = ['', p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''),
+                    p.year, phoneSq(p.phone), p.email||'', days, p.paid ? 'PAID' : '']
+      vals.forEach((v,i) => {
+        const c = wsq.getCell(qr,i+1); c.value=v; c.font = i===2 ? f14b : f14; c.border=thinBorder
+        c.alignment = (i===2||i===6) ? leftMid : ctr
+        if (i===8 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
+      })
+      const buf = photoData.get(p.id)
+      if (buf) {
+        const imgId = wb.addImage({ buffer: buf, extension: 'jpeg' })
+        wsq.addImage(imgId, { tl:{ col:0.1, row:qr-1+0.06 }, ext:{ width:56, height:56 }, editAs:'oneCell' })
+      }
+      wsq.getRow(qr).height = 46
+      qr++
+    })
+    wsq.autoFilter = { from:{ row:3, column:2 }, to:{ row:Math.max(3,qr-1), column:9 } }
+    wsq.views = [{ state:'frozen', ySplit:3 }]
+    ;[11,8,32,22,10,18,36,9,10].forEach((w,i) => wsq.getColumn(i+1).width = w)
+  }
+
   // ═══ SHEET 1: EVALUATION SHEET ═══
   const ws = wb.addWorksheet('Evaluation Sheet')
   ws.pageSetup.orientation = 'landscape'
@@ -158,7 +213,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // Row 1: Title
   ws.mergeCells(1, 1, 1, notesCol)
   const titleCell = ws.getCell(1, 1)
-  titleCell.value = 'OREGON CLUB SOCCER — TRYOUT EVALUATION — DAY ' + currentDay
+  titleCell.value = 'OREGON CLUB SOCCER — TRYOUT EVALUATION — ' + DAY_TITLE
   titleCell.font = { ...f14b, color:{ argb:'FF333333' } }
   titleCell.fill = hdrFill
   titleCell.alignment = ctr
@@ -305,7 +360,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // ═══ SHEET 3: SCORE SUMMARY ═══
   const ws3 = wb.addWorksheet('Score Summary')
   ws3.mergeCells(1, 1, 1, 15)
-  ws3.getCell(1,1).value = 'SCORE SUMMARY — DAY '+currentDay+'   (D1-D4: ✓ present · E excused · — absent · \u00b7 joined later · blank = day not reached)'
+  ws3.getCell(1,1).value = 'SCORE SUMMARY — '+DAY_TITLE+'   (D1-D4: ✓ present · E excused · — absent · \u00b7 joined later · blank = day not reached)'
   ws3.getCell(1,1).font = f14b
   const sumHdrs = ['#','Name','Position','Year','Avg Game','Avg Compete','Avg Total','# Evals',
                    ...TRYOUT_DAYS.map(d=>'D'+d), 'Days', 'Tags','Notes']
@@ -346,9 +401,10 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // up today — click the cell, copy out of the formula bar, paste into Mail or
   // Messages. That is the thing you want at 9pm on a cut night.
   const ws4 = wb.addWorksheet('Contact List')
-  const presentToday = roster.filter(p => attended(checkins, p.id, currentDay))
+  // On the squad day everyone on the sheet IS the group you want to contact.
+  const presentToday = isSquadDay ? roster : roster.filter(p => attended(checkins, p.id, currentDay))
   ws4.mergeCells(1,1,1,8)
-  ws4.getCell(1,1).value = 'CONTACT LIST — DAY '+currentDay+'   ('+roster.length+' listed · '+presentToday.length+' present today)'
+  ws4.getCell(1,1).value = 'CONTACT LIST — '+DAY_TITLE+'   ('+roster.length+' listed'+(isSquadDay?')':' · '+presentToday.length+' present today)')
   ws4.getCell(1,1).font = f14b
 
   // Phones come in however they were typed. Strip to digits for the text-app
@@ -362,8 +418,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   }
   const bccLine  = presentToday.map(p => p.email).filter(Boolean).join('; ')
   const textLine = presentToday.map(p => digitsOf(p.phone)).filter(d => d.length >= 10).join(', ')
-  ;[['EMAILS — present Day '+currentDay+'  (paste into BCC)', bccLine || '— no emails on file —'],
-    ['PHONES — present Day '+currentDay+'  (paste into a group text)', textLine || '— no phone numbers on file —'],
+  const whoLine = isSquadDay ? 'the squad' : 'present Day '+currentDay
+  ;[['EMAILS — '+whoLine+'  (paste into BCC)', bccLine || '— no emails on file —'],
+    ['PHONES — '+whoLine+'  (paste into a group text)', textLine || '— no phone numbers on file —'],
   ].forEach(([label, value], i) => {
     const lr = 3 + i*2
     ws4.mergeCells(lr,1,lr,8)
@@ -374,15 +431,16 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     ws4.getRow(lr+1).height = 20
   })
 
-  const cHdrs = ['#','Name','Phone','Email','Position','Year','Day '+currentDay,'Paid']
+  const cHdrs = ['#','Name','Phone','Email','Position','Year', isSquadDay ? 'Days' : 'Day '+currentDay, 'Paid']
   cHdrs.forEach((h,i) => { const c = ws4.getCell(8,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let pr = 9
   roster.forEach(p => {
     const st = attendanceState(checkins, p.id, currentDay)
+    const att = isSquadDay
+      ? TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
+      : (st === 'present' ? '✓' : st === 'excused' ? 'E' : '—')
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, prettyPhone(p.phone), p.email||'',
-                  p.pos1+(p.pos2?', '+p.pos2:''), p.year,
-                  st === 'present' ? '✓' : st === 'excused' ? 'E' : '—',
-                  p.paid ? 'PAID' : '']
+                  p.pos1+(p.pos2?', '+p.pos2:''), p.year, att, p.paid ? 'PAID' : '']
     vals.forEach((v,i) => {
       const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
       c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
@@ -396,10 +454,12 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ;[8,32,18,38,20,10,12,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
+  // Nobody is being graded on the squad day, so the two evaluation sheets go.
+  if (isSquadDay) { wb.removeWorksheet(ws.id); wb.removeWorksheet(ws2.id) }
   const buffer = await wb.xlsx.writeBuffer()
   const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'Oregon_Tryouts_Day_'+currentDay+'.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = isSquadDay ? 'Oregon_Final_Squad.xlsx' : 'Oregon_Tryouts_Day_'+currentDay+'.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -1260,7 +1320,8 @@ function EvalView({ evaluator, onLogout }) {
   // present, so the common path is one tap off "All present"; the second tap
   // is only for the handful who told you they couldn't make it.
   const cycleCheckin = async (playerId, day) => {
-    if (String(playerId).startsWith('demo-')) return // demo players can't be modified
+    if (String(playerId).startsWith('demo-')) return
+    if (day === SQUAD_DAY) return            // the squad day is not a session // demo players can't be modified
     const existing = dbCheckins.find(c => c.player_id === playerId && c.day_number === day)
     const state = attendanceState(dbCheckins, playerId, day)
     const next = state === 'present' ? { checked_in:false, excused:false }
@@ -1404,7 +1465,7 @@ function EvalView({ evaluator, onLogout }) {
 
   // Day navigation — forward and back
   const goToDay = async (day) => {
-    if (day < 1 || day > 4) return
+    if (day < 1 || day > SQUAD_DAY) return
     await supabase.from('app_settings').update({ value: String(day) }).eq('key', 'current_day')
     setCurrentDay(day)
   }
@@ -1507,15 +1568,15 @@ function EvalView({ evaluator, onLogout }) {
   const DayNav = () => (
     <div style={{ display:'flex', alignItems:'center', gap:2 }}>
       <button onClick={()=>goToDay(currentDay-1)} disabled={currentDay<=1} style={{ width:24, height:24, borderRadius:4, border:'none', background:'#ffffff15', color:currentDay<=1?'#ffffff22':'#ffffffcc', fontSize:14, cursor:currentDay<=1?'default':'pointer', fontWeight:700 }}>◂</button>
-      {[1,2,3,4].map(d => (
+      {DAYS_AND_SQUAD.map(d => (
         <button key={d} onClick={()=>goToDay(d)} style={{
           padding:'4px 10px', borderRadius:6, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
           background: d===currentDay?Y : d<currentDay?G+'aa':'#ffffff15',
           color: d===currentDay?G : d<currentDay?'#ffffffcc':'#ffffff44',
-          fontFamily:"'Geo',sans-serif",
-        }}>D{d}</button>
+          fontFamily:"'Geo',sans-serif", letterSpacing: d===SQUAD_DAY?0.5:0,
+        }}>{dayPill(d)}</button>
       ))}
-      <button onClick={()=>goToDay(currentDay+1)} disabled={currentDay>=4} style={{ width:24, height:24, borderRadius:4, border:'none', background:'#ffffff15', color:currentDay>=4?'#ffffff22':'#ffffffcc', fontSize:14, cursor:currentDay>=4?'default':'pointer', fontWeight:700 }}>▸</button>
+      <button onClick={()=>goToDay(currentDay+1)} disabled={currentDay>=SQUAD_DAY} style={{ width:24, height:24, borderRadius:4, border:'none', background:'#ffffff15', color:currentDay>=SQUAD_DAY?'#ffffff22':'#ffffffcc', fontSize:14, cursor:currentDay>=SQUAD_DAY?'default':'pointer', fontWeight:700 }}>▸</button>
     </div>
   )
 
@@ -1568,11 +1629,13 @@ function EvalView({ evaluator, onLogout }) {
               <div key={label} style={{ flex:1, minWidth:0, background:'#0f172a', border:'1px solid #1e293b', borderRadius:10, padding:'9px 12px' }}>
                 <div style={{ color:'#64748b', fontSize:10, textTransform:'uppercase', letterSpacing:1, fontWeight:600 }}>{label}</div>
                 <div style={{ display:'flex', alignItems:'baseline', gap:5, marginTop:3 }}>
-                  <span style={{ color, fontSize:27, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{c.here}</span>
-                  <span style={{ color:'#475569', fontSize:14, fontWeight:600 }}>/ {c.expected}</span>
+                  <span style={{ color, fontSize:27, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{currentDay===SQUAD_DAY ? c.total : c.here}</span>
+                  {currentDay!==SQUAD_DAY && <span style={{ color:'#475569', fontSize:14, fontWeight:600 }}>/ {c.expected}</span>}
                 </div>
-                <div style={{ color:'#475569', fontSize:10, marginTop:2 }}>here / expected Day {currentDay}</div>
-                {(c.missing > 0 || c.excused > 0) && (
+                <div style={{ color:'#475569', fontSize:10, marginTop:2 }}>
+                  {currentDay===SQUAD_DAY ? 'in the final squad' : 'here / expected Day '+currentDay}
+                </div>
+                {currentDay!==SQUAD_DAY && (c.missing > 0 || c.excused > 0) && (
                   <div style={{ fontSize:10, fontWeight:700, marginTop:3 }}>
                     {c.missing > 0 && <span style={{ color:'#fca5a5' }}>{c.missing} missing</span>}
                     {c.missing > 0 && c.excused > 0 && <span style={{ color:'#334155' }}> · </span>}
@@ -1585,11 +1648,17 @@ function EvalView({ evaluator, onLogout }) {
 
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8, gap:8 }}>
             <div>
-              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Day {currentDay} Attendance — tap cycles present / absent / excused</div>
+              <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>
+                {currentDay===SQUAD_DAY
+                  ? 'Final Squad — the players you kept after Day 4 cuts'
+                  : 'Day '+currentDay+' Attendance — tap cycles present / absent / excused'}
+              </div>
               <div style={{ color:Y, fontSize:12, fontWeight:600, marginTop:2 }}>
-                {presentCount} of {activePlayers.length} present
-                {absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
-                {excusedCount > 0 && <span style={{ color:'#fcd34d', fontWeight:500 }}> · {excusedCount} excused</span>}
+                {currentDay===SQUAD_DAY
+                  ? activePlayers.length+' players'
+                  : presentCount+' of '+activePlayers.length+' present'}
+                {currentDay!==SQUAD_DAY && absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
+                {currentDay!==SQUAD_DAY && excusedCount > 0 && <span style={{ color:'#fcd34d', fontWeight:500 }}> · {excusedCount} excused</span>}
                 {activePlayers.length - paidCount > 0 && <span style={{ color:'#f87171', fontWeight:500 }}> · {activePlayers.length - paidCount} unpaid</span>}
               </div>
             </div>
@@ -1603,8 +1672,9 @@ function EvalView({ evaluator, onLogout }) {
           </div>
 
           {activePlayers.length > 0 && (<>
-            {/* What the export contains — explicit, so a reprint never silently drops players */}
-            <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:8, flexWrap:'wrap' }}>
+            {/* What the export contains — explicit, so a reprint never silently drops players.
+                On the squad day there is nothing to filter: the squad is the squad. */}
+            {currentDay !== SQUAD_DAY && <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:8, flexWrap:'wrap' }}>
               <span style={{ color:'#475569', fontSize:10, alignSelf:'center' }}>Export:</span>
               {[[false,'Everyone still in ('+activePlayers.length+')'],[true,'Present today ('+presentCount+')']].map(([v,l])=>(
                 <button key={String(v)} onClick={()=>setExportPresentOnly(v)} style={{
@@ -1612,7 +1682,7 @@ function EvalView({ evaluator, onLogout }) {
                   background:exportPresentOnly===v?'#1e293b':'transparent', color:exportPresentOnly===v?Y:'#475569',
                   fontSize:10, fontWeight:600, cursor:'pointer' }}>{l}</button>
               ))}
-            </div>
+            </div>}
 
             {/* The roster tab is the check-in table, so finding one man in 71 has to be fast */}
             <div style={{ display:'flex', gap:6, marginBottom:8 }}>
@@ -1628,7 +1698,7 @@ function EvalView({ evaluator, onLogout }) {
             </div>
 
             {/* Bulk attendance — most players show up, so marking the exceptions is faster */}
-            <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+            {currentDay !== SQUAD_DAY && <div style={{ display:'flex', gap:6, marginBottom:10 }}>
               <button onClick={()=>{if(confirm('Mark all '+activePlayers.length+' players present for Day '+currentDay+'?'))setAllPresent(true)}}
                 style={{ flex:1, padding:'7px 10px', borderRadius:8, border:'1px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:11, fontWeight:600, cursor:'pointer' }}>
                 ✓ All present
@@ -1637,7 +1707,7 @@ function EvalView({ evaluator, onLogout }) {
                 style={{ flex:1, padding:'7px 10px', borderRadius:8, border:'1px solid #334155', background:'#0f172a', color:'#94a3b8', fontSize:11, fontWeight:600, cursor:'pointer' }}>
                 Clear all
               </button>
-            </div>
+            </div>}
           </>)}
           {activePlayers.length===0 ? emptyState('📋','No players checked in yet.') : (
             <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
@@ -1941,14 +2011,24 @@ function EvalView({ evaluator, onLogout }) {
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
             <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>Day Navigation</div>
             <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-              <div style={{ fontSize:48, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>{currentDay}</div>
+              <div style={{ fontSize: currentDay===SQUAD_DAY?26:48, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{currentDay===SQUAD_DAY?'XI':currentDay}</div>
               <div style={{ flex:1 }}>
-                <div style={{ color:'#e2e8f0', fontSize:14, fontWeight:600 }}>Day {currentDay} of 4</div>
-                <div style={{ color:'#64748b', fontSize:12 }}>{dayCheckedInPlayers.length} checked in today</div>
+                <div style={{ color:'#e2e8f0', fontSize:14, fontWeight:600 }}>{currentDay===SQUAD_DAY?'Final Squad':'Day '+currentDay+' of 4'}</div>
+                <div style={{ color:'#64748b', fontSize:12 }}>
+                  {currentDay===SQUAD_DAY
+                    ? activePlayers.length+' players kept · tryout closed'
+                    : dayCheckedInPlayers.length+' checked in today'}
+                </div>
               </div>
               <div style={{ display:'flex', gap:6 }}>
-                {currentDay > 1 && <button onClick={()=>goToDay(currentDay-1)} style={{ padding:'10px 14px', borderRadius:8, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>← DAY {currentDay-1}</button>}
-                {currentDay < 4 && <button onClick={()=>{if(confirm('Move to Day '+(currentDay+1)+'?'))goToDay(currentDay+1)}} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>DAY {currentDay+1} →</button>}
+                {currentDay > 1 && <button onClick={()=>goToDay(currentDay-1)} style={{ padding:'10px 14px', borderRadius:8, border:'1px solid #334155', background:'transparent', color:'#94a3b8', fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>← {dayLabel(currentDay-1).toUpperCase()}</button>}
+                {currentDay < SQUAD_DAY && <button onClick={()=>{
+                    const nxt = currentDay+1
+                    const msg = nxt===SQUAD_DAY
+                      ? 'Close the tryout and move to the Final Squad?\n\nEveryone still marked active becomes the squad. You can come back to Day 4 if you need to.'
+                      : 'Move to Day '+nxt+'?'
+                    if(confirm(msg)) goToDay(nxt)
+                  }} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>{dayLabel(currentDay+1).toUpperCase()} →</button>}
               </div>
             </div>
           </div>
