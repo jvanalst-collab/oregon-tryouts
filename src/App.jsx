@@ -47,6 +47,11 @@ const SQUAD_DAY = 5
 const DAYS_AND_SQUAD = [...TRYOUT_DAYS, SQUAD_DAY]
 const dayLabel = d => d === SQUAD_DAY ? 'Final Squad' : 'Day ' + d
 const dayPill  = d => d === SQUAD_DAY ? 'SQUAD' : 'D' + d
+
+// Practice-squad men are kept, not cut: they train with the team but are not
+// guaranteed a place in a travelling party. They stay "active" everywhere in
+// the app and are separated only where the distinction matters.
+const isPractice = p => !!p?.practice_squad
 const attended = (checkins, playerId, day) =>
   !!(checkins || []).find(c => c.player_id === playerId && c.day_number === day && c.checked_in)
 
@@ -92,6 +97,8 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const roster = (presentOnly && !isSquadDay)
     ? active.filter(p => attended(checkins, p.id, currentDay))
     : active
+  const official = roster.filter(p => !isPractice(p))
+  const practice = roster.filter(isPractice)
   const DAY_TITLE = isSquadDay ? 'FINAL SQUAD' : 'DAY ' + currentDay
 
   // Two rows per player: the positives, then the negatives in the same order.
@@ -144,43 +151,60 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // The team you kept, with a face against every name and everything you need
   // to contact them. No blank columns: nobody is being graded any more.
   if (isSquadDay) {
-    const wsq = wb.addWorksheet('Final Squad')
-    wsq.pageSetup.orientation = 'portrait'
-    wsq.pageSetup.fitToPage = true; wsq.pageSetup.fitToWidth = 1; wsq.pageSetup.fitToHeight = 0
-    wsq.pageSetup.printTitlesRow = '3:3'
-    wsq.mergeCells(1,1,1,9)
-    wsq.getCell(1,1).value = 'OREGON CLUB SOCCER — FINAL SQUAD   ('+roster.length+' players)'
-    wsq.getCell(1,1).font = { name:'Arial', size:16, bold:true }
-    wsq.getRow(1).height = 24
-    ;['Photo','#','Name','Position','Year','Phone','Email','Days','Paid'].forEach((h,i) => {
-      const c = wsq.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr
-    })
     const digitsSq = s => String(s||'').replace(/\D/g,'')
     const phoneSq = s => { const d = digitsSq(s)
       if (d.length === 10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6)
       if (d.length === 11 && d[0] === '1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7)
       return s || '' }
-    let qr = 4
-    roster.forEach(p => {
-      const days = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
-      const vals = ['', p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''),
-                    p.year, phoneSq(p.phone), p.email||'', days, p.paid ? 'PAID' : '']
-      vals.forEach((v,i) => {
-        const c = wsq.getCell(qr,i+1); c.value=v; c.font = i===2 ? f14b : f14; c.border=thinBorder
-        c.alignment = (i===2||i===6) ? leftMid : ctr
-        if (i===8 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
-      })
-      const buf = photoData.get(p.id)
-      if (buf) {
-        const imgId = wb.addImage({ buffer: buf, extension: 'jpeg' })
-        wsq.addImage(imgId, { tl:{ col:0.1, row:qr-1+0.06 }, ext:{ width:56, height:56 }, editAs:'oneCell' })
+
+    // Same sheet twice: the travelling squad, then the practice squad. The
+    // practice tab is only written when there is somebody on it.
+    const squadSheet = (tabName, title, group, subtitle) => {
+      const wsq = wb.addWorksheet(tabName)
+      wsq.pageSetup.orientation = 'portrait'
+      wsq.pageSetup.fitToPage = true; wsq.pageSetup.fitToWidth = 1; wsq.pageSetup.fitToHeight = 0
+      wsq.pageSetup.printTitlesRow = '3:3'
+      wsq.mergeCells(1,1,1,9)
+      wsq.getCell(1,1).value = title+'   ('+group.length+' players)'
+      wsq.getCell(1,1).font = { name:'Arial', size:16, bold:true }
+      wsq.getRow(1).height = 24
+      if (subtitle) {
+        wsq.mergeCells(2,1,2,9)
+        const sc = wsq.getCell(2,1); sc.value = subtitle
+        sc.font = { name:'Arial', size:11, italic:true, color:{ argb:'FF666666' } }
       }
-      wsq.getRow(qr).height = 46
-      qr++
-    })
-    wsq.autoFilter = { from:{ row:3, column:2 }, to:{ row:Math.max(3,qr-1), column:9 } }
-    wsq.views = [{ state:'frozen', ySplit:3 }]
-    ;[11,8,32,22,10,18,36,9,10].forEach((w,i) => wsq.getColumn(i+1).width = w)
+      ;['Photo','#','Name','Position','Year','Phone','Email','Days','Paid'].forEach((h,i) => {
+        const c = wsq.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr
+      })
+      let qr = 4
+      group.forEach(p => {
+        const days = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
+        const vals = ['', p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''),
+                      p.year, phoneSq(p.phone), p.email||'', days, p.paid ? 'PAID' : '']
+        vals.forEach((v,i) => {
+          const c = wsq.getCell(qr,i+1); c.value=v; c.font = i===2 ? f14b : f14; c.border=thinBorder
+          c.alignment = (i===2||i===6) ? leftMid : ctr
+          if (i===8 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
+        })
+        const buf = photoData.get(p.id)
+        if (buf) {
+          const imgId = wb.addImage({ buffer: buf, extension: 'jpeg' })
+          wsq.addImage(imgId, { tl:{ col:0.1, row:qr-1+0.06 }, ext:{ width:56, height:56 }, editAs:'oneCell' })
+        }
+        wsq.getRow(qr).height = 46
+        qr++
+      })
+      wsq.autoFilter = { from:{ row:3, column:2 }, to:{ row:Math.max(3,qr-1), column:9 } }
+      wsq.views = [{ state:'frozen', ySplit:3 }]
+      ;[11,8,32,22,10,18,36,9,10].forEach((w,i) => wsq.getColumn(i+1).width = w)
+    }
+
+    squadSheet('Final Squad', 'OREGON CLUB SOCCER — FINAL SQUAD', official,
+               'Travelling squad — first call for games and tournaments.')
+    if (practice.length) {
+      squadSheet('Practice Squad', 'OREGON CLUB SOCCER — PRACTICE SQUAD', practice,
+                 'Train with the team. Not guaranteed a place in a travelling party.')
+    }
   }
 
   // ═══ SHEET 1: EVALUATION SHEET ═══
@@ -403,7 +427,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const ws4 = wb.addWorksheet('Contact List')
   // On the squad day everyone on the sheet IS the group you want to contact.
   const presentToday = isSquadDay ? roster : roster.filter(p => attended(checkins, p.id, currentDay))
-  ws4.mergeCells(1,1,1,8)
+  const showSquadCol = practice.length > 0
+  const lastCol = showSquadCol ? 9 : 8
+  ws4.mergeCells(1,1,1,lastCol)
   ws4.getCell(1,1).value = 'CONTACT LIST — '+DAY_TITLE+'   ('+roster.length+' listed'+(isSquadDay?')':' · '+presentToday.length+' present today)')
   ws4.getCell(1,1).font = f14b
 
@@ -416,24 +442,35 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     if (d.length === 11 && d[0] === '1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7)
     return s || ''
   }
-  const bccLine  = presentToday.map(p => p.email).filter(Boolean).join('; ')
-  const textLine = presentToday.map(p => digitsOf(p.phone)).filter(d => d.length >= 10).join(', ')
-  const whoLine = isSquadDay ? 'the squad' : 'present Day '+currentDay
-  ;[['EMAILS — '+whoLine+'  (paste into BCC)', bccLine || '— no emails on file —'],
+  // On the squad day the useful split is travelling squad vs everyone training.
+  const contactGroup = (isSquadDay && practice.length) ? presentToday.filter(p => !isPractice(p)) : presentToday
+  const bccLine  = contactGroup.map(p => p.email).filter(Boolean).join('; ')
+  const textLine = contactGroup.map(p => digitsOf(p.phone)).filter(d => d.length >= 10).join(', ')
+  const whoLine = !isSquadDay ? 'present Day '+currentDay
+                : practice.length ? 'travelling squad only' : 'the squad'
+  const copyBlocks = [
+    ['EMAILS — '+whoLine+'  (paste into BCC)', bccLine || '— no emails on file —'],
     ['PHONES — '+whoLine+'  (paste into a group text)', textLine || '— no phone numbers on file —'],
-  ].forEach(([label, value], i) => {
+  ]
+  if (isSquadDay && practice.length) copyBlocks.push(
+    ['EMAILS — everyone training (squad + practice)',
+     presentToday.map(p => p.email).filter(Boolean).join('; ') || '— no emails on file —'])
+  copyBlocks.forEach(([label, value], i) => {
     const lr = 3 + i*2
-    ws4.mergeCells(lr,1,lr,8)
+    ws4.mergeCells(lr,1,lr,lastCol)
     const lc = ws4.getCell(lr,1); lc.value = label; lc.font = { ...f14b, size:11 }; lc.fill = hdrFill
-    ws4.mergeCells(lr+1,1,lr+1,8)
+    ws4.mergeCells(lr+1,1,lr+1,lastCol)
     const vc = ws4.getCell(lr+1,1); vc.value = value; vc.font = { ...f14, size:10 }
     vc.alignment = leftMid; vc.border = thinBorder
     ws4.getRow(lr+1).height = 20
   })
+  // One blank row after the last block, then the table.
+  const HDR = 3 + copyBlocks.length*2 + 1
 
   const cHdrs = ['#','Name','Phone','Email','Position','Year', isSquadDay ? 'Days' : 'Day '+currentDay, 'Paid']
-  cHdrs.forEach((h,i) => { const c = ws4.getCell(8,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
-  let pr = 9
+  if (showSquadCol) cHdrs.push('Squad')
+  cHdrs.forEach((h,i) => { const c = ws4.getCell(HDR,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+  let pr = HDR + 1
   roster.forEach(p => {
     const st = attendanceState(checkins, p.id, currentDay)
     const att = isSquadDay
@@ -441,6 +478,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       : (st === 'present' ? '✓' : st === 'excused' ? 'E' : '—')
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, prettyPhone(p.phone), p.email||'',
                   p.pos1+(p.pos2?', '+p.pos2:''), p.year, att, p.paid ? 'PAID' : '']
+    if (showSquadCol) vals.push(isPractice(p) ? 'Practice' : 'Official')
     vals.forEach((v,i) => {
       const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
       c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
@@ -449,9 +487,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     })
     pr++
   })
-  ws4.autoFilter = { from:{ row:8, column:1 }, to:{ row:Math.max(8,pr-1), column:8 } }
-  ws4.views = [{ state:'frozen', ySplit:8 }]
-  ;[8,32,18,38,20,10,12,10].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ws4.autoFilter = { from:{ row:HDR, column:1 }, to:{ row:Math.max(HDR,pr-1), column:lastCol } }
+  ws4.views = [{ state:'frozen', ySplit:HDR }]
+  ;[8,32,18,38,20,10,12,10,11].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   // Nobody is being graded on the squad day, so the two evaluation sheets go.
@@ -1357,6 +1395,22 @@ function EvalView({ evaluator, onLogout }) {
     loadAll()
   }
 
+  // Moving a man between the travelling squad and the practice squad. He stays
+  // active either way — this is not a cut and nothing he has earned is lost.
+  const togglePractice = async (playerId) => {
+    if (String(playerId).startsWith('demo-')) return
+    const p = players.find(x => x.id === playerId)
+    const toPractice = !p?.practice_squad
+    const who = (p?.first_name||'') + ' ' + (p?.last_name||'')
+    const msg = toPractice
+      ? 'Move ' + who + ' to the PRACTICE SQUAD?\n\nHe trains with the team but is not guaranteed a place in a travelling party.'
+      : 'Move ' + who + ' up to the TRAVELLING SQUAD?'
+    if (!confirm(msg)) return
+    const { error } = await supabase.from('players').update({ practice_squad: toPractice }).eq('id', playerId)
+    if (error) { alert('Could not change his squad: ' + error.message); return }
+    loadAll()
+  }
+
   const togglePaid = async (playerId) => {
     if (String(playerId).startsWith('demo-')) return
     const p = players.find(x => x.id === playerId)
@@ -1386,6 +1440,8 @@ function EvalView({ evaluator, onLogout }) {
     return {
       field: tally(activePlayers.filter(p => !isGK(p))),
       gk: tally(activePlayers.filter(isGK)),
+      practice: activePlayers.filter(isPractice).length,
+      official: activePlayers.filter(p => !isPractice(p)).length,
     }
   }, [activePlayers, checkins, currentDay])
 
@@ -1655,7 +1711,7 @@ function EvalView({ evaluator, onLogout }) {
               </div>
               <div style={{ color:Y, fontSize:12, fontWeight:600, marginTop:2 }}>
                 {currentDay===SQUAD_DAY
-                  ? activePlayers.length+' players'
+                  ? squadCounts.official+' travelling'+(squadCounts.practice?' · '+squadCounts.practice+' practice squad':'')
                   : presentCount+' of '+activePlayers.length+' present'}
                 {currentDay!==SQUAD_DAY && absentCount > 0 && <span style={{ color:'#fca5a5', fontWeight:500 }}> · {absentCount} absent</span>}
                 {currentDay!==SQUAD_DAY && excusedCount > 0 && <span style={{ color:'#fcd34d', fontWeight:500 }}> · {excusedCount} excused</span>}
@@ -1743,13 +1799,28 @@ function EvalView({ evaluator, onLogout }) {
                       <div style={{ width:26, height:26, borderRadius:6, flexShrink:0, background:ci?G:exc?'#b45309':'#1e293b', border:'2px solid '+(ci?Y:exc?'#fcd34d':'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:ci?Y:'#fef3c7', fontSize:ci?14:11, fontWeight:700 }}>{ci?'✓':exc?'E':''}</div>
                     </button>
 
-                    <button onClick={()=>togglePaid(p.id)} title={p.paid?'Paid — tap if he still owes':'Owes the entry fee — tap when paid'}
-                      style={{ width:52, flexShrink:0, border:'none', borderLeft:'1px solid #1e293b', cursor:'pointer',
-                        background:p.paid?'#064e3b60':'#7f1d1d60', color:p.paid?'#6ee7b7':'#fca5a5',
-                        fontSize:9, fontWeight:700, letterSpacing:.5, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:1 }}>
-                      <span style={{ fontSize:13 }}>{p.paid?'$':'—'}</span>
-                      <span>{p.paid?'PAID':'OWES'}</span>
-                    </button>
+                    {/* One 54px column on the right, not two — a second chip
+                        side by side eats the name on a phone. Squad on top from
+                        Day 4, entry fee underneath. */}
+                    <div style={{ width:54, flexShrink:0, borderLeft:'1px solid #1e293b', display:'flex', flexDirection:'column' }}>
+                      {currentDay >= 4 && (
+                        <button onClick={()=>togglePractice(p.id)}
+                          title={isPractice(p)?'Practice squad — tap to move him up to the travelling squad':'Travelling squad — tap to move him to the practice squad'}
+                          style={{ flex:1, border:'none', borderBottom:'1px solid #1e293b', cursor:'pointer',
+                            background:isPractice(p)?'#78350f60':'#15473360', color:isPractice(p)?'#fcd34d':'#6ee7b7',
+                            fontSize:9, fontWeight:700, letterSpacing:.5, display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
+                          <span style={{ fontSize:11 }}>{isPractice(p)?'P':'\u2605'}</span>
+                          <span>{isPractice(p)?'PRAC':'SQUAD'}</span>
+                        </button>
+                      )}
+                      <button onClick={()=>togglePaid(p.id)} title={p.paid?'Paid — tap if he still owes':'Owes the entry fee — tap when paid'}
+                        style={{ flex:1, border:'none', cursor:'pointer',
+                          background:p.paid?'#064e3b60':'#7f1d1d60', color:p.paid?'#6ee7b7':'#fca5a5',
+                          fontSize:9, fontWeight:700, letterSpacing:.5, display:'flex', alignItems:'center', justifyContent:'center', gap:3 }}>
+                        <span style={{ fontSize:11 }}>{p.paid?'$':'\u2014'}</span>
+                        <span>{p.paid?'PAID':'OWES'}</span>
+                      </button>
+                    </div>
 
                   </div>
                 )
@@ -2016,7 +2087,7 @@ function EvalView({ evaluator, onLogout }) {
                 <div style={{ color:'#e2e8f0', fontSize:14, fontWeight:600 }}>{currentDay===SQUAD_DAY?'Final Squad':'Day '+currentDay+' of 4'}</div>
                 <div style={{ color:'#64748b', fontSize:12 }}>
                   {currentDay===SQUAD_DAY
-                    ? activePlayers.length+' players kept · tryout closed'
+                    ? squadCounts.official+' travelling squad · '+squadCounts.practice+' practice squad'
                     : dayCheckedInPlayers.length+' checked in today'}
                 </div>
               </div>
