@@ -52,6 +52,19 @@ const dayPill  = d => d === SQUAD_DAY ? 'SQUAD' : 'D' + d
 // guaranteed a place in a travelling party. They stay "active" everywhere in
 // the app and are separated only where the distinction matters.
 const isPractice = p => !!p?.practice_squad
+
+// Men who hold a place without trying out: captains, and returners who were
+// injured through the tryout. They are squad members, so they count in the
+// squad sheets — but they were never evaluated, so they are kept out of the
+// evaluation sheets and out of the attendance maths, where a zero would read
+// as a no-show rather than "was never expected".
+const EXEMPT_REASONS = [
+  { val:'captain',  label:'Captain',          short:'Captain'  },
+  { val:'injured',  label:'Injured returner', short:'Injured'  },
+  { val:'returner', label:'Returning player', short:'Returner' },
+]
+const isExempt = p => !!p?.exempt_reason
+const exemptShort = p => (EXEMPT_REASONS.find(r => r.val === p?.exempt_reason)?.short) || (p?.exempt_reason || '')
 const attended = (checkins, playerId, day) =>
   !!(checkins || []).find(c => c.player_id === playerId && c.day_number === day && c.checked_in)
 
@@ -99,6 +112,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     : active
   const official = roster.filter(p => !isPractice(p))
   const practice = roster.filter(isPractice)
+  // Nobody evaluates a captain who never trialled, so the two evaluation
+  // sheets skip them. Every other sheet counts them.
+  const evalRoster = roster.filter(p => !isExempt(p))
   const DAY_TITLE = isSquadDay ? 'FINAL SQUAD' : 'DAY ' + currentDay
 
   // Two rows per player: the positives, then the negatives in the same order.
@@ -120,7 +136,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // fails to load is simply skipped — the pinnie number sits right beside it.
   const photoData = new Map()
   if (includePhotos) {
-    const withPhotos = roster.filter(p => p.photo_url)
+    const withPhotos = roster.filter(p => p.photo_url)   // squad sheets want faces too
     for (let i = 0; i < withPhotos.length; i += 6) {
       await Promise.all(withPhotos.slice(i, i + 6).map(async p => {
         try {
@@ -164,27 +180,31 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       wsq.pageSetup.orientation = 'portrait'
       wsq.pageSetup.fitToPage = true; wsq.pageSetup.fitToWidth = 1; wsq.pageSetup.fitToHeight = 0
       wsq.pageSetup.printTitlesRow = '3:3'
-      wsq.mergeCells(1,1,1,9)
+      wsq.mergeCells(1,1,1,10)
       wsq.getCell(1,1).value = title+'   ('+group.length+' players)'
       wsq.getCell(1,1).font = { name:'Arial', size:16, bold:true }
       wsq.getRow(1).height = 24
       if (subtitle) {
-        wsq.mergeCells(2,1,2,9)
+        wsq.mergeCells(2,1,2,10)
         const sc = wsq.getCell(2,1); sc.value = subtitle
         sc.font = { name:'Arial', size:11, italic:true, color:{ argb:'FF666666' } }
       }
-      ;['Photo','#','Name','Position','Year','Phone','Email','Days','Paid'].forEach((h,i) => {
+      ;['Photo','#','Name','Position','Year','Phone','Email','Days','Via','Paid'].forEach((h,i) => {
         const c = wsq.getCell(3,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr
       })
       let qr = 4
       group.forEach(p => {
         const days = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
         const vals = ['', p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''),
-                      p.year, phoneSq(p.phone), p.email||'', days, p.paid ? 'PAID' : '']
+                      p.year, phoneSq(p.phone), p.email||'',
+                      isExempt(p) ? '—' : days,
+                      isExempt(p) ? exemptShort(p) : 'Tryout',
+                      p.paid ? 'PAID' : '']
         vals.forEach((v,i) => {
           const c = wsq.getCell(qr,i+1); c.value=v; c.font = i===2 ? f14b : f14; c.border=thinBorder
           c.alignment = (i===2||i===6) ? leftMid : ctr
-          if (i===8 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
+          if (i===8 && isExempt(p)) c.font = { ...f14, italic:true, color:{ argb:'FF8A6D1F' } }
+          if (i===9 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
         })
         const buf = photoData.get(p.id)
         if (buf) {
@@ -194,9 +214,9 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
         wsq.getRow(qr).height = 46
         qr++
       })
-      wsq.autoFilter = { from:{ row:3, column:2 }, to:{ row:Math.max(3,qr-1), column:9 } }
+      wsq.autoFilter = { from:{ row:3, column:2 }, to:{ row:Math.max(3,qr-1), column:10 } }
       wsq.views = [{ state:'frozen', ySplit:3 }]
-      ;[11,8,32,22,10,18,36,9,10].forEach((w,i) => wsq.getColumn(i+1).width = w)
+      ;[11,8,32,22,10,18,36,9,11,10].forEach((w,i) => wsq.getColumn(i+1).width = w)
     }
 
     squadSheet('Final Squad', 'OREGON CLUB SOCCER — FINAL SQUAD', official,
@@ -286,7 +306,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
 
   // ─── Player rows (2 rows each: positives, then negatives) ───
   let row = 6
-  roster.forEach((p) => {
+  evalRoster.forEach((p) => {
     const r1 = row, r2 = row + 1
     const rows2 = [r1, r2]
     const greenFont = { name:'Arial', size:12, color:{ argb:'FF1E8449' } }
@@ -364,7 +384,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const ws2 = wb.addWorksheet('By Position')
   let r2 = 1
   POS_LIST_GROUPS.forEach(g => {
-    const gp = roster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
+    const gp = evalRoster.filter(g.match).sort((a,b) => a.pinnie_num - b.pinnie_num)
     if (!gp.length) return
     const hdrCell = ws2.getCell(r2, 1); hdrCell.value = g.label + ' (' + gp.length + ')'; hdrCell.font = f14b; r2++
     ;['#','Name','Position','Year','Game','Compete','K/C/?','Notes'].forEach((h, i) => {
@@ -407,8 +427,13 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       return st === 'present' ? '✓' : st === 'excused' ? 'E' : '—'
     })
     const daysAttended = TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
+    const ex = isExempt(p)
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, p.pos1+(p.pos2?', '+p.pos2:''), p.year,
-                  aG, aI, aT, gm.length, ...att, daysAttended, tags, notes]
+                  ex?'—':aG, ex?'—':aI, ex?'—':aT, ex?'—':gm.length,
+                  ...(ex ? TRYOUT_DAYS.map(()=>'—') : att),
+                  ex?'—':daysAttended,
+                  ex ? exemptShort(p)+' — holds a place, not evaluated' : tags,
+                  notes]
     const textFrom = 8 + TRYOUT_DAYS.length + 1 // Tags and Notes wrap; everything before is centered
     vals.forEach((v,i) => {
       const c = ws3.getCell(sr,i+1); c.value=v; c.font=f14; c.border=thinBorder
@@ -428,7 +453,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // On the squad day everyone on the sheet IS the group you want to contact.
   const presentToday = isSquadDay ? roster : roster.filter(p => attended(checkins, p.id, currentDay))
   const showSquadCol = practice.length > 0
-  const lastCol = showSquadCol ? 9 : 8
+  const lastCol = showSquadCol ? 10 : 9
   ws4.mergeCells(1,1,1,lastCol)
   ws4.getCell(1,1).value = 'CONTACT LIST — '+DAY_TITLE+'   ('+roster.length+' listed'+(isSquadDay?')':' · '+presentToday.length+' present today)')
   ws4.getCell(1,1).font = f14b
@@ -467,7 +492,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // One blank row after the last block, then the table.
   const HDR = 3 + copyBlocks.length*2 + 1
 
-  const cHdrs = ['#','Name','Phone','Email','Position','Year', isSquadDay ? 'Days' : 'Day '+currentDay, 'Paid']
+  const cHdrs = ['#','Name','Phone','Email','Position','Year', isSquadDay ? 'Days' : 'Day '+currentDay, 'Paid', 'Via']
   if (showSquadCol) cHdrs.push('Squad')
   cHdrs.forEach((h,i) => { const c = ws4.getCell(HDR,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
   let pr = HDR + 1
@@ -477,19 +502,21 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
       ? TRYOUT_DAYS.filter(d => attended(checkins, p.id, d)).length
       : (st === 'present' ? '✓' : st === 'excused' ? 'E' : '—')
     const vals = [p.pinnie_num, p.first_name+' '+p.last_name, prettyPhone(p.phone), p.email||'',
-                  p.pos1+(p.pos2?', '+p.pos2:''), p.year, att, p.paid ? 'PAID' : '']
+                  p.pos1+(p.pos2?', '+p.pos2:''), p.year,
+                  isExempt(p) ? '—' : att, p.paid ? 'PAID' : '',
+                  isExempt(p) ? exemptShort(p) : 'Tryout']
     if (showSquadCol) vals.push(isPractice(p) ? 'Practice' : 'Official')
     vals.forEach((v,i) => {
       const c = ws4.getCell(pr,i+1); c.value=v; c.font=f14; c.border=thinBorder
       c.alignment = (i===1||i===3) ? leftMid : ctr   // name and email read left
-      if (i===6 && v === '—') c.font = { ...f14, color:{ argb:'FF922B21' } }
+      if (i===6 && v === '—') c.font = { ...f14, color: isExempt(p) ? { argb:'FF8A6D1F' } : { argb:'FF922B21' } }
       if (i===7 && !v)        c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
     })
     pr++
   })
   ws4.autoFilter = { from:{ row:HDR, column:1 }, to:{ row:Math.max(HDR,pr-1), column:lastCol } }
   ws4.views = [{ state:'frozen', ySplit:HDR }]
-  ;[8,32,18,38,20,10,12,10,11].forEach((w,i) => ws4.getColumn(i+1).width = w)
+  ;[8,32,18,38,20,10,12,10,11,11].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
   // ═══ SAVE ═══
   // Nobody is being graded on the squad day, so the two evaluation sheets go.
@@ -1350,6 +1377,9 @@ function EvalView({ evaluator, onLogout }) {
   const [exportPresentOnly, setExportPresentOnly] = useState(false)
   const [rosterSearch, setRosterSearch] = useState('')
   const [rosterUnpaidOnly, setRosterUnpaidOnly] = useState(false)
+  const [addForm, setAddForm] = useState({ first:'', last:'', pos1:'', pos2:'', year:'', num:'', phone:'', email:'', reason:'captain' })
+  const [addBusy, setAddBusy] = useState(false)
+  const [addMsg, setAddMsg] = useState('')
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
@@ -1411,6 +1441,46 @@ function EvalView({ evaluator, onLogout }) {
     loadAll()
   }
 
+  // Lowest unused pinnie number, so a hand-added man never collides with a
+  // trialist and numbers stay permanently unique.
+  const nextFreeNumber = () => {
+    const taken = new Set(players.map(p => p.pinnie_num))
+    let n = 1
+    while (taken.has(n)) n++
+    return n
+  }
+
+  // Add a squad member who never went through check-in: a captain, or a
+  // returner who was injured through the tryout. Marked exempt so the squad
+  // sheets count him while the evaluation sheets leave him out.
+  const addSquadMember = async () => {
+    const f = addForm
+    if (!f.first.trim() || !f.last.trim()) { setAddMsg('First and last name are required.'); return }
+    if (!f.pos1) { setAddMsg('Pick a primary position — the squad sheet sorts on it.'); return }
+    if (!f.year) { setAddMsg('Pick a year.'); return }
+    const num = f.num.trim() ? parseInt(f.num.trim(), 10) : nextFreeNumber()
+    if (!Number.isInteger(num) || num <= 0) { setAddMsg('Number must be a whole number.'); return }
+    const clash = players.find(p => p.pinnie_num === num)
+    if (clash) { setAddMsg('#'+num+' already belongs to '+clash.first_name+' '+clash.last_name+'. Leave the box empty and one will be assigned.'); return }
+    setAddBusy(true); setAddMsg('')
+    const { error } = await supabase.from('players').insert({
+      first_name: f.first.trim(), last_name: f.last.trim(),
+      pos1: f.pos1, pos2: f.pos2 || null, year: f.year,
+      pinnie_num: num, phone: f.phone.trim() || null, email: f.email.trim() || null,
+      status: 'active', paid: true, practice_squad: false, exempt_reason: f.reason,
+    })
+    setAddBusy(false)
+    if (error) {
+      setAddMsg(/duplicate key|unique/i.test(error.message||'')
+        ? 'That number was taken a moment ago. Try again and one will be assigned.'
+        : 'Could not add him: ' + error.message)
+      return
+    }
+    setAddMsg('Added ' + f.first.trim() + ' ' + f.last.trim() + ' as #' + num + '.')
+    setAddForm({ first:'', last:'', pos1:'', pos2:'', year:'', num:'', phone:'', email:'', reason: f.reason })
+    loadAll()
+  }
+
   const togglePaid = async (playerId) => {
     if (String(playerId).startsWith('demo-')) return
     const p = players.find(x => x.id === playerId)
@@ -1434,8 +1504,12 @@ function EvalView({ evaluator, onLogout }) {
       const st = p => attendanceState(checkins, p.id, currentDay)
       const here = group.filter(p => st(p) === 'present').length
       const excused = group.filter(p => st(p) === 'excused').length
-      const expected = group.length - excused
-      return { total: group.length, here, excused, expected, missing: expected - here }
+      // Captains and injured returners hold a place without trialling, so they
+      // never belong in "expected tonight" — counting them would invent a
+      // missing man every session.
+      const exempt = group.filter(isExempt).length
+      const expected = group.length - excused - exempt
+      return { total: group.length, here, excused, exempt, expected, missing: Math.max(0, expected - here) }
     }
     return {
       field: tally(activePlayers.filter(p => !isGK(p))),
@@ -1793,7 +1867,12 @@ function EvalView({ evaluator, onLogout }) {
                         <div style={{ color:ci||exc?'#f1f5f9':'#64748b', fontSize:14, fontWeight:600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{p.first_name} {p.last_name}</div>
                         <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:2 }}>
                           <span style={{ color:'#64748b', fontSize:11 }}>{p.pos1}{p.pos2?' / '+p.pos2:''} · {p.year}</span>
-                          <AttendanceDots player={p} />
+                          {isExempt(p)
+                            ? <span title="Holds a place without trialling — no attendance expected"
+                                style={{ fontSize:9, fontWeight:700, color:'#fcd34d', background:'#78350f60', padding:'1px 6px', borderRadius:4, letterSpacing:.4 }}>
+                                {exemptShort(p).toUpperCase()}
+                              </span>
+                            : <AttendanceDots player={p} />}
                         </div>
                       </div>
                       <div style={{ width:26, height:26, borderRadius:6, flexShrink:0, background:ci?G:exc?'#b45309':'#1e293b', border:'2px solid '+(ci?Y:exc?'#fcd34d':'#334155'), display:'flex', alignItems:'center', justifyContent:'center', color:ci?Y:'#fef3c7', fontSize:ci?14:11, fontWeight:700 }}>{ci?'✓':exc?'E':''}</div>
@@ -2102,6 +2181,71 @@ function EvalView({ evaluator, onLogout }) {
                   }} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>{dayLabel(currentDay+1).toUpperCase()} →</button>}
               </div>
             </div>
+          </div>
+
+          {/* Captains and injured returners never pass through check-in, so without
+              this the final squad sheet is short by however many of them there are. */}
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
+            <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>Add a Squad Member</div>
+            <div style={{ color:'#64748b', fontSize:12, marginBottom:12, lineHeight:1.45 }}>
+              For men who hold a place without trialling — captains, and returners who were injured.
+              They count in the squad sheets but stay out of the evaluation sheets and the attendance numbers.
+            </div>
+
+            <div style={{ display:'flex', gap:6, marginBottom:12, flexWrap:'wrap' }}>
+              {EXEMPT_REASONS.map(r => (
+                <button key={r.val} onClick={()=>setAddForm(f=>({...f, reason:r.val}))} style={{
+                  padding:'6px 12px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:600,
+                  border:'1px solid '+(addForm.reason===r.val?Y+'80':'#334155'),
+                  background:addForm.reason===r.val?'#1e293b':'transparent',
+                  color:addForm.reason===r.val?Y:'#64748b' }}>{r.label}</button>
+              ))}
+            </div>
+
+            <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+              <input value={addForm.first} onChange={e=>setAddForm(f=>({...f,first:e.target.value}))} placeholder="First name" style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }} />
+              <input value={addForm.last} onChange={e=>setAddForm(f=>({...f,last:e.target.value}))} placeholder="Last name" style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }} />
+            </div>
+            <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+              <select value={addForm.pos1} onChange={e=>setAddForm(f=>({...f,pos1:e.target.value}))} style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }}>
+                <option value="">Position...</option>{POSITIONS.map(x=><option key={x} value={x}>{x}</option>)}
+              </select>
+              <select value={addForm.pos2} onChange={e=>setAddForm(f=>({...f,pos2:e.target.value}))} style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }}>
+                <option value="">2nd (none)</option>{POSITIONS.map(x=><option key={x} value={x}>{x}</option>)}
+              </select>
+            </div>
+            <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+              <select value={addForm.year} onChange={e=>setAddForm(f=>({...f,year:e.target.value}))} style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }}>
+                <option value="">Year...</option><option value="FR">Freshman</option><option value="SOPH">Sophomore</option>
+                <option value="JUN">Junior</option><option value="SEN">Senior</option><option value="GRAD">Grad Student</option>
+              </select>
+              <input value={addForm.num} onChange={e=>setAddForm(f=>({...f,num:e.target.value}))} placeholder={'# (auto: '+nextFreeNumber()+')'} type="number" style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }} />
+            </div>
+            <div style={{ display:'flex', gap:8, marginBottom:10 }}>
+              <input value={addForm.phone} onChange={e=>setAddForm(f=>({...f,phone:e.target.value}))} placeholder="Phone" type="tel" style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }} />
+              <input value={addForm.email} onChange={e=>setAddForm(f=>({...f,email:e.target.value}))} placeholder="Email" type="email" autoCapitalize="none" autoCorrect="off" style={{ ...input, flex:1, padding:'9px 12px', fontSize:14 }} />
+            </div>
+            <button onClick={addSquadMember} disabled={addBusy} style={{
+              width:'100%', padding:'10px 14px', borderRadius:8, border:'none', background:addBusy?'#334155':Y,
+              color:addBusy?'#64748b':G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:addBusy?'default':'pointer' }}>
+              {addBusy ? 'ADDING...' : 'ADD TO SQUAD'}
+            </button>
+            {addMsg && <div style={{ marginTop:9, fontSize:12, color: addMsg.startsWith('Added') ? '#6ee7b7' : '#fca5a5' }}>{addMsg}</div>}
+
+            {activePlayers.filter(isExempt).length > 0 && (
+              <div style={{ marginTop:14, borderTop:'1px solid #1e293b', paddingTop:10 }}>
+                <div style={{ color:'#64748b', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:6 }}>
+                  Holding a place ({activePlayers.filter(isExempt).length})
+                </div>
+                {activePlayers.filter(isExempt).map(p => (
+                  <div key={p.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 0', fontSize:13 }}>
+                    <span style={{ fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700, color:Y, background:G, padding:'2px 5px', borderRadius:4 }}>#{p.pinnie_num}</span>
+                    <span style={{ flex:1, color:'#e2e8f0', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.first_name} {p.last_name}</span>
+                    <span style={{ fontSize:10, fontWeight:700, color:'#fcd34d', background:'#78350f60', padding:'2px 7px', borderRadius:4, letterSpacing:.4 }}>{exemptShort(p).toUpperCase()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
