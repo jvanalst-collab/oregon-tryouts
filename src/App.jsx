@@ -37,6 +37,221 @@ const POS_LIST_GROUPS = [
   { key: 'GK', label: 'GK', match: p => (p.pos1||'')==='GK' },
 ]
 
+// ── TRYOUT INSIGHTS ────────────────────────────────────────────────────────
+// Deterministic analysis over the tryout data. Every finding below is
+// arithmetic on rows you already have — no model call, no API key, no network.
+// Each finding states what was counted so a coach can check it by hand.
+
+const FAMILY = { GK:'GK', CB:'DEF', RB:'DEF', LB:'DEF', 'RB/LB':'DEF', CDM:'MID', CM:'MID',
+                 CAM:'MID', LW:'WIDE', RW:'WIDE', Wing:'WIDE', ST:'FWD', CF:'FWD' }
+const XI_NEED = { GK:1, DEF:4, MID:3, WIDE:2, FWD:1 }   // 4-3-3
+const FAMILY_LABEL = { GK:'goalkeeper', DEF:'defender', MID:'central midfielder',
+                       WIDE:'wide forward', FWD:'striker' }
+
+const fam = pos => FAMILY[pos] || null
+const famsOf = p => [...new Set([fam(p?.pos1), fam(p?.pos2)].filter(Boolean))]
+const mean = a => a.length ? a.reduce((x,y)=>x+y,0) / a.length : null
+const sd = a => { if (a.length < 2) return null
+  const m = mean(a); return Math.sqrt(a.reduce((s,v)=>s+(v-m)*(v-m),0) / (a.length-1)) }
+const r1 = v => v == null ? '\u2014' : (Math.round(v*10)/10).toFixed(1)
+
+// Per-player average across every evaluator who scored him, on any day.
+function playerAverages(players, scores) {
+  const out = new Map()
+  players.forEach(p => {
+    const rows = scores.filter(s => s.player_id === p.id)
+    const g = rows.map(s => s.game_ability).filter(v => v != null)
+    const i = rows.map(s => s.intangibles).filter(v => v != null)
+    const per = new Map()
+    rows.forEach(s => {
+      if (s.game_ability == null && s.intangibles == null) return
+      const vals = [s.game_ability, s.intangibles].filter(v => v != null)
+      per.set(s.evaluator_id, mean(vals))
+    })
+    const totals = [...per.values()]
+    out.set(p.id, {
+      game: mean(g), intang: mean(i),
+      total: totals.length ? mean(totals) : null,
+      nEvals: per.size,
+      spread: totals.length > 1 ? Math.max(...totals) - Math.min(...totals) : null,
+    })
+  })
+  return out
+}
+
+function buildInsights({ players = [], scores = [], evaluators = [], checkins = [],
+                                currentDay = 1, tryoutDays = [1,2,3,4] } = {}) {
+  const findings = []
+  const add = (level, title, body, items) => findings.push({ level, title, body, items: items || [] })
+
+  const real = players.filter(p => !String(p.id).startsWith('demo-'))
+  const kept = real.filter(p => p.status === 'active')
+  const cut  = real.filter(p => p.status === 'cut')
+  const trialists = real.filter(p => !p.exempt_reason)
+  const avg = playerAverages(real, scores)
+  const name = p => p.first_name + ' ' + p.last_name
+  const attended = (id, d) => !!checkins.find(c => c.player_id === id && c.day_number === d && c.checked_in)
+
+  const headline = {
+    kept: kept.length, cut: cut.length, total: real.length,
+    scored: real.filter(p => (avg.get(p.id)?.nEvals || 0) > 0).length,
+    evaluators: evaluators.length,
+  }
+
+  // ── 1. Can the squad field its shape? ─────────────────────────────────────
+  if (kept.length >= 11) {
+    const elevens = Math.floor(kept.length / 11)
+    const natural = {}, cover = {}
+    Object.keys(XI_NEED).forEach(k => { natural[k] = 0; cover[k] = 0 })
+    kept.forEach(p => {
+      const f1 = fam(p.pos1); if (f1) natural[f1]++
+      famsOf(p).forEach(f => cover[f]++)
+    })
+    const short = Object.keys(XI_NEED)
+      .map(k => ({ k, need: XI_NEED[k]*elevens, natural: natural[k], cover: cover[k] }))
+      .filter(x => x.natural < x.need)
+    if (short.length) {
+      add('alert', 'Short of natural cover in ' + short.length + (short.length===1?' position':' positions'),
+        'Fielding ' + elevens + ' side' + (elevens===1?'':'s') + ' in a 4-3-3 needs more first-choice players than the squad holds in ' +
+        short.map(x => FAMILY_LABEL[x.k]).join(' and ') + '. Players who list the position second can cover, but someone plays out of position.',
+        short.map(x => x.natural + ' natural ' + FAMILY_LABEL[x.k] + (x.natural===1?'':'s') + ' for ' + x.need +
+          ' slot' + (x.need===1?'':'s') + ' — ' + x.cover + ' can cover it from either listed position'))
+    } else {
+      add('ok', 'Every position has natural cover',
+        'The squad holds at least one first-choice player for every slot in ' + elevens + ' side' + (elevens===1?'':'s') + ' of a 4-3-3.')
+    }
+  }
+
+  // ── 2. Are the evaluators scoring on the same scale? ──────────────────────
+  const evStats = evaluators.map(ev => {
+    const rows = scores.filter(s => s.evaluator_id === ev.id)
+    const vals = rows.flatMap(s => [s.game_ability, s.intangibles].filter(v => v != null))
+    return { ev, n: rows.length, mean: mean(vals), sd: sd(vals) }
+  }).filter(e => e.n >= 5)
+  if (evStats.length >= 2) {
+    const all = evStats.flatMap(e => scores.filter(s => s.evaluator_id === e.ev.id)
+      .flatMap(s => [s.game_ability, s.intangibles].filter(v => v != null)))
+    const gm = mean(all)
+    const off = evStats.filter(e => Math.abs(e.mean - gm) >= 0.4)
+      .sort((a,b) => Math.abs(b.mean-gm) - Math.abs(a.mean-gm))
+    const flat = evStats.filter(e => e.sd != null && e.sd < 0.55)
+    if (off.length) {
+      add('watch', 'Evaluators are not on the same scale',
+        'The group average is ' + r1(gm) + '. These evaluators sit far enough from it that a player’s score depends partly on who watched him. Worth a word before the next round rather than a correction after it.',
+        off.map(e => e.ev.name + ' averages ' + r1(e.mean) + ' (' + (e.mean > gm ? '+' : '') + r1(e.mean-gm) + ' vs the group, ' + e.n + ' scores)'))
+    }
+    if (flat.length) {
+      add('watch', (flat.length===1?'One evaluator is':'Some evaluators are') + ' not separating players',
+        'A narrow spread means nearly everyone got the same mark, so those scores do little to rank anybody.',
+        flat.map(e => e.ev.name + ' has a spread of ' + r1(e.sd) + ' across ' + e.n + ' scores'))
+    }
+    if (!off.length && !flat.length) {
+      add('ok', 'Evaluators are broadly calibrated',
+        'All ' + evStats.length + ' evaluators sit within 0.4 of the group average of ' + r1(gm) + ', and all are separating players rather than marking everyone alike.')
+    }
+  }
+
+  // ── 3. Which calls were contested? ────────────────────────────────────────
+  const contested = real
+    .map(p => ({ p, a: avg.get(p.id) }))
+    .filter(x => x.a && x.a.nEvals >= 2 && x.a.spread >= 2)
+    .sort((a,b) => b.a.spread - a.a.spread)
+    .slice(0, 8)
+  if (contested.length) {
+    add('watch', contested.length + ' player' + (contested.length===1?'':'s') + ' your evaluators disagree about',
+      'Two or more points apart on the same man. These are the ones to watch together on the next pitch, because right now the decision depends on whose sheet you read.',
+      contested.map(x => '#' + x.p.pinnie_num + ' ' + name(x.p) + ' — ' + r1(x.a.spread) +
+        ' points apart across ' + x.a.nEvals + ' evaluators (avg ' + r1(x.a.total) + ')' +
+        (x.p.status === 'cut' ? ' · already cut' : '')))
+  }
+
+  // ── 4. Who is being judged on too little? ─────────────────────────────────
+  const thin = kept.filter(p => !p.exempt_reason && (avg.get(p.id)?.nEvals || 0) < 2)
+  if (thin.length && currentDay > 1) {
+    add(thin.length > kept.length * 0.25 ? 'alert' : 'watch',
+      thin.length + ' player' + (thin.length===1?'':'s') + ' still in on one evaluation or none',
+      'Cutting on a single opinion is where the mistakes live. Point an evaluator at these before the next round of cuts.',
+      thin.slice(0,12).map(p => '#' + p.pinnie_num + ' ' + name(p) + ' — ' +
+        (avg.get(p.id)?.nEvals || 0) + ' evaluation' + ((avg.get(p.id)?.nEvals||0)===1?'':'s')))
+  }
+
+  // ── 5. Did any cut outscore a man who stayed? ─────────────────────────────
+  const keptScored = kept.filter(p => !p.exempt_reason && (avg.get(p.id)?.nEvals||0) >= 2 && avg.get(p.id)?.total != null)
+  const cutScored  = cut.filter(p => (avg.get(p.id)?.nEvals||0) >= 2 && avg.get(p.id)?.total != null)
+  if (keptScored.length >= 3 && cutScored.length >= 1) {
+    const lowestKept = Math.min(...keptScored.map(p => avg.get(p.id).total))
+    const inversions = cutScored.filter(p => avg.get(p.id).total > lowestKept)
+      .sort((a,b) => avg.get(b.id).total - avg.get(a.id).total).slice(0, 8)
+    if (inversions.length) {
+      add('watch', inversions.length + ' cut player' + (inversions.length===1?'':'s') + ' scored above your lowest-rated keeper',
+        'Not necessarily wrong — position need, attitude and fit all sit outside the numbers. But if any of these were close calls, the scores did not agree with them. Lowest kept average is ' + r1(lowestKept) + '.',
+        inversions.map(p => '#' + p.pinnie_num + ' ' + name(p) + ' — ' + r1(avg.get(p.id).total) +
+          ' avg, cut after Day ' + (p.cut_after_day ?? '?')))
+    } else {
+      add('ok', 'Cuts line up with the scores',
+        'Every player cut scored below the lowest-rated man still in, on at least two evaluations each.')
+    }
+  }
+
+  // ── 6. How cleanly did each round separate? ───────────────────────────────
+  const rounds = [...new Set(cut.map(p => p.cut_after_day).filter(d => d != null))].sort()
+  if (rounds.length) {
+    const lines = rounds.map(d => {
+      const outs = cut.filter(p => p.cut_after_day === d).map(p => avg.get(p.id)?.total).filter(v => v != null)
+      const ins  = real.filter(p => p.status === 'active' || (p.cut_after_day || 99) > d)
+        .map(p => avg.get(p.id)?.total).filter(v => v != null)
+      const mo = mean(outs), mi = mean(ins)
+      if (mo == null || mi == null) return null
+      return { d, n: outs.length, gap: mi - mo, mo, mi }
+    }).filter(Boolean)
+    const tight = lines.filter(l => l.gap < 0.4)
+    if (lines.length) {
+      add(tight.length ? 'watch' : 'ok',
+        tight.length ? 'Round ' + tight.map(l=>l.d).join(' and ') + ' cut close to the line' : 'Each round separated clearly',
+        tight.length
+          ? 'A small gap between the men who went and the men who stayed means that round was a coin-flip on the numbers alone.'
+          : 'In every round the players cut averaged clearly below the players kept.',
+        lines.map(l => 'Day ' + l.d + ': ' + l.n + ' cut at ' + r1(l.mo) + ' avg, squad behind them at ' + r1(l.mi) + ' — gap ' + r1(l.gap)))
+    }
+  }
+
+  // ── 7. Attendance against outcome ─────────────────────────────────────────
+  const daysSoFar = tryoutDays.filter(d => d <= currentDay)
+  if (daysSoFar.length >= 2) {
+    const missed = kept.filter(p => !p.exempt_reason &&
+      daysSoFar.filter(d => !attended(p.id, d)).length >= 2)
+    if (missed.length) {
+      add('watch', missed.length + ' player' + (missed.length===1?'':'s') + ' still in after missing two sessions or more',
+        'Worth knowing before you commit a place — both for what you have actually seen of them, and for what the squad reads into it.',
+        missed.slice(0,10).map(p => '#' + p.pinnie_num + ' ' + name(p) + ' — ' +
+          daysSoFar.filter(d => attended(p.id, d)).length + ' of ' + daysSoFar.length + ' sessions'))
+    }
+  }
+
+  // ── 8. Year mix ───────────────────────────────────────────────────────────
+  if (kept.length >= 8) {
+    const by = {}
+    kept.forEach(p => { by[p.year || '?'] = (by[p.year || '?'] || 0) + 1 })
+    const leaving = (by.SEN || 0) + (by.GRAD || 0)
+    const share = leaving / kept.length
+    const order = ['FR','SOPH','JUN','SEN','GRAD','?']
+    const line = order.filter(y => by[y]).map(y => by[y] + ' ' + y)
+    if (share >= 0.4) {
+      add('watch', Math.round(share*100) + '% of the squad is in its final year',
+        'Seniors and grads leave together. A squad this top-heavy rebuilds hard next autumn, which is an argument for the younger man when two players are level.',
+        [line.join(' · ')])
+    } else {
+      add('ok', 'Year mix is balanced',
+        Math.round(share*100) + '% of the squad is senior or grad, so next year’s rebuild is manageable.',
+        [line.join(' · ')])
+    }
+  }
+
+  const order = { alert: 0, watch: 1, ok: 2 }
+  findings.sort((a,b) => order[a.level] - order[b.level])
+  return { headline, findings }
+}
+
 // ── EXCEL EXPORT ──
 const TRYOUT_DAYS = [1, 2, 3, 4]
 
@@ -1499,6 +1714,11 @@ function EvalView({ evaluator, onLogout }) {
   // Excused men are pulled out of the denominator, so "expected" is who should
   // physically be on the grass tonight and the gap to "here" is who is missing
   // without a reason.
+  // Deterministic read of the tryout data — recomputed whenever anything moves.
+  const insights = useMemo(
+    () => buildInsights({ players, scores, evaluators, checkins, currentDay, tryoutDays: TRYOUT_DAYS }),
+    [players, scores, evaluators, checkins, currentDay])
+
   const squadCounts = useMemo(() => {
     const tally = (group) => {
       const st = p => attendanceState(checkins, p.id, currentDay)
@@ -1677,7 +1897,7 @@ function EvalView({ evaluator, onLogout }) {
   }
 
   // ── RENDER HELPERS ──
-  const tabStyle = t => ({ flex:1, padding:'10px 0', border:'none', borderBottom:'3px solid '+(view===t?Y:'transparent'), background:'transparent', color:view===t?Y:'#64748b', fontWeight:700, fontSize:11, cursor:'pointer', textTransform:'uppercase', letterSpacing:1 })
+  const tabStyle = t => ({ flex:'1 0 auto', minWidth:62, padding:'10px 6px', whiteSpace:'nowrap', border:'none', borderBottom:'3px solid '+(view===t?Y:'transparent'), background:'transparent', color:view===t?Y:'#64748b', fontWeight:700, fontSize:11, cursor:'pointer', textTransform:'uppercase', letterSpacing:1 })
   const pillBtn = (active, onClick, text) => <button onClick={onClick} style={{ padding:'4px 10px', borderRadius:20, border:'none', background:active?G:'#1e293b', color:active?Y:'#64748b', fontSize:11, fontWeight:600, cursor:'pointer' }}>{text}</button>
   const emptyState = (icon, msg) => <div style={{ textAlign:'center', padding:'60px 20px', color:'#475569' }}><div style={{ fontSize:48, marginBottom:12 }}>{icon}</div><div style={{ fontSize:15, fontWeight:600, color:'#64748b' }}>{msg}</div></div>
   const PlayerPhoto = ({ player: p, size=40 }) => p.photo_url
@@ -1733,12 +1953,13 @@ function EvalView({ evaluator, onLogout }) {
           )}
           <DayNav />
         </div>
-        <div style={{ display:'flex' }}>
+        <div style={{ display:'flex', overflowX:'auto', scrollbarWidth:'none' }}>
           <button onClick={()=>setView('roster')} style={tabStyle('roster')}>Roster</button>
           <button onClick={()=>setView('score')} style={tabStyle('score')}>Score</button>
           <button onClick={()=>setView('dashboard')} style={tabStyle('dashboard')}>Results</button>
           <button onClick={()=>setView('positions')} style={tabStyle('positions')}>Positions</button>
           <button onClick={()=>setView('upload')} style={tabStyle('upload')}>Upload</button>
+          {isCoach && <button onClick={()=>setView('insights')} style={tabStyle('insights')}>Insights</button>}
           {isCoach && <button onClick={()=>setView('manage')} style={tabStyle('manage')}>Manage</button>}
         </div>
       </div>
@@ -2043,6 +2264,62 @@ function EvalView({ evaluator, onLogout }) {
               <div><div style={{ color:'#f87171', fontSize:26, fontWeight:700, fontFamily:"'Geo',sans-serif" }}>{players.filter(p=>p.status==='cut').length}</div><div style={{ color:'#94a3b8', fontSize:10, textTransform:'uppercase' }}>Cut</div></div>
             </div>
           </>)}
+        </div>
+      )}
+
+      {/* ══ INSIGHTS TAB ══ */}
+      {view === 'insights' && (
+        <div style={{ padding:16 }}>
+          <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1 }}>Tryout Insights</div>
+          <div style={{ color:'#475569', fontSize:11, marginTop:3, marginBottom:12, lineHeight:1.45 }}>
+            Arithmetic on the sheets your evaluators filled in — recomputed every time you open this tab.
+            Every line says what was counted, so you can check any of it by hand.
+          </div>
+
+          <div style={{ display:'flex', gap:8, marginBottom:14 }}>
+            {[['Still in', insights.headline.kept, Y],
+              ['Cut', insights.headline.cut, '#fca5a5'],
+              ['Scored', insights.headline.scored, '#7dd3fc'],
+              ['Evaluators', insights.headline.evaluators, '#a5b4fc']].map(([l,v,c]) => (
+              <div key={l} style={{ flex:1, minWidth:0, background:'#0f172a', border:'1px solid #1e293b', borderRadius:10, padding:'8px 10px' }}>
+                <div style={{ color:c, fontSize:22, fontWeight:700, fontFamily:"'Geo',sans-serif", lineHeight:1 }}>{v}</div>
+                <div style={{ color:'#64748b', fontSize:9, textTransform:'uppercase', letterSpacing:.8, marginTop:4 }}>{l}</div>
+              </div>
+            ))}
+          </div>
+
+          {insights.findings.length === 0
+            ? emptyState('\ud83d\udcca','Not enough scored players yet. Come back after the first round of evaluations.')
+            : (
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {insights.findings.map((f, i) => {
+                const tone = f.level === 'alert' ? { bar:'#dc2626', chip:'#7f1d1d', text:'#fca5a5', label:'ACT' }
+                           : f.level === 'watch' ? { bar:'#b45309', chip:'#78350f', text:'#fcd34d', label:'WATCH' }
+                           :                       { bar:G,        chip:'#064e3b', text:'#6ee7b7', label:'OK' }
+                return (
+                  <div key={i} style={{ background:'#0f172a', borderRadius:10, borderLeft:'4px solid '+tone.bar, padding:'12px 14px' }}>
+                    <div style={{ display:'flex', alignItems:'flex-start', gap:8, marginBottom:5 }}>
+                      <span style={{ flexShrink:0, fontSize:9, fontWeight:700, letterSpacing:.6, color:tone.text, background:tone.chip, padding:'2px 7px', borderRadius:4, marginTop:2 }}>{tone.label}</span>
+                      <span style={{ flex:1, color:'#f1f5f9', fontSize:14, fontWeight:600, lineHeight:1.3 }}>{f.title}</span>
+                    </div>
+                    <div style={{ color:'#94a3b8', fontSize:12.5, lineHeight:1.5 }}>{f.body}</div>
+                    {f.items.length > 0 && (
+                      <div style={{ marginTop:8, borderTop:'1px solid #1e293b', paddingTop:8, display:'flex', flexDirection:'column', gap:4 }}>
+                        {f.items.map((it, j) => (
+                          <div key={j} style={{ color:'#cbd5e1', fontSize:12, lineHeight:1.4, paddingLeft:10, borderLeft:'2px solid #1e293b' }}>{it}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          <div style={{ marginTop:16, color:'#475569', fontSize:11, lineHeight:1.5 }}>
+            These are observations, not verdicts. Position need, attitude and what you saw with your own eyes
+            all sit outside the numbers, and the numbers do not know about any of them.
+          </div>
         </div>
       )}
 
