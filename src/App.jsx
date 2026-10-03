@@ -204,6 +204,17 @@ function buildBreakdowns({ players = [], scores = [], checkins = [],
 // GAME and COMPETE are scored 1-10 on the printed sheet. Every threshold below
 // is expressed against that range — halve them if the scale ever becomes 1-5.
 const SCALE_MAX   = 10
+// Named bands for the 1-10 scale. A bare number means a different thing to
+// every evaluator; these give all of them the same referent.
+const SCALE_BANDS = [
+  { lo:9, hi:10, label:'Above this level',   blurb:'Would start for a side above ours' },
+  { lo:7, hi:8,  label:'Clear squad man',    blurb:'In the XI on merit, no argument' },
+  { lo:5, hi:6,  label:'Borderline',         blurb:'Squad depth — would not start today' },
+  { lo:3, hi:4,  label:'Below the standard', blurb:'Off the pace at this level' },
+  { lo:1, hi:2,  label:'Well short',         blurb:'Not close' },
+]
+const bandFor = v => SCALE_BANDS.find(b => v >= b.lo && v <= b.hi) || null
+const SCALE_LINE = SCALE_BANDS.map(b => b.lo+'-'+b.hi+' '+b.label).join('   ·   ')
 const SCALE_DRIFT = 0.8   // an evaluator this far off the group average is marking to a different scale
 const SCALE_FLAT  = 1.1   // below this spread he is giving nearly everyone the same mark
 const SCALE_SPLIT = 4     // evaluators this far apart on one player disagree about him
@@ -656,6 +667,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   const anchorCell = ws.getCell(3, 1)
   anchorCell.value =
     'GAME = reads + technical execution   ·   COMPETE = work rate, duels, coachability, response to mistakes\n' +
+    'SCALE   ' + SCALE_LINE + '\n' +
     '9-10 clear keep   ·   7-8 likely keep   ·   5-6 borderline, look again   ·   3-4 likely cut   ·   1-2 clear cut'
   anchorCell.font = { name:'Arial', size:11 }
   anchorCell.fill = grayFill
@@ -679,7 +691,7 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   // Tag header merged
   ws.mergeCells(5, 8+PH, 5, 7 + PH + numTagCols)
   const tagHdr = ws.getCell(5, 8+PH)
-  tagHdr.value = 'CIRCLE APPLICABLE TAGS'; tagHdr.font = f14b; tagHdr.fill = hdrFill; tagHdr.alignment = ctr; tagHdr.border = thinBorder
+  tagHdr.value = 'CIRCLE TAGS \u2014 MARK AGAIN EACH TIME YOU SEE IT'; tagHdr.font = f14b; tagHdr.fill = hdrFill; tagHdr.alignment = ctr; tagHdr.border = thinBorder
   // Notes header
   const notesHdr = ws.getCell(5, notesCol)
   notesHdr.value = 'Notes'; notesHdr.font = f14b; notesHdr.fill = hdrFill; notesHdr.alignment = ctr; notesHdr.border = thinBorder
@@ -980,6 +992,14 @@ function PlayerCheckIn({ onBack }) {
   const [photo, setPhoto] = useState(null)
   const [photoFile, setPhotoFile] = useState(null)
   const [submitted, setSubmitted] = useState(false)
+  // Registration mode is set by the coach in Settings. On it, this page signs
+  // players up ahead of Day 1 instead of marking them present.
+  const [regMode, setRegMode] = useState(false)
+  useEffect(() => {
+    supabase.from('app_settings').select('value').eq('key','registration_mode').single()
+      .then(({ data }) => setRegMode(data?.value === 'on'))
+      .catch(() => {})
+  }, [])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const fileRef = useRef()
@@ -1050,17 +1070,32 @@ function PlayerCheckIn({ onBack }) {
       // Same reasoning as the photo: the player row already exists, so a blip
       // here must not bounce them back to a form that will reject their pinnie.
       // Worst case the coach taps them present on the Roster tab.
-      try {
-        const { data: settings } = await supabase.from('app_settings').select('value').eq('key','current_day').single()
-        const currentDay = parseInt(settings?.value || '1')
-        await supabase.from('day_checkins').upsert({ player_id: player.id, day_number: currentDay, checked_in: true })
-      } catch (ciErr) {
-        console.warn('Check-in row failed; mark this player present manually:', ciErr)
+      // In registration mode the player is signing up days ahead, so he is on
+      // the roster but NOT present — you tick him off at the table on the night.
+      if (!regMode) {
+        try {
+          const { data: settings } = await supabase.from('app_settings').select('value').eq('key','current_day').single()
+          const currentDay = parseInt(settings?.value || '1')
+          await supabase.from('day_checkins').upsert({ player_id: player.id, day_number: currentDay, checked_in: true })
+        } catch (ciErr) {
+          console.warn('Check-in row failed; mark this player present manually:', ciErr)
+        }
       }
       setSubmitted(true)
     } catch (err) { setError('Something went wrong: ' + err.message) }
     setLoading(false)
   }
+
+  if (submitted && regMode) return (
+    <div style={{ minHeight:'100vh', background:'#020617', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
+      <div style={{ width:80, height:80, borderRadius:'50%', background:G, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:20 }}><span style={{ fontSize:40, color:Y }}>✓</span></div>
+      <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif", marginBottom:8, textAlign:'center' }}>YOU'RE REGISTERED</div>
+      <div style={{ color:'#94a3b8', fontSize:15, textAlign:'center', maxWidth:320, lineHeight:1.5 }}>
+        {form.first}, you're number <b style={{color:'#e2e8f0'}}>#{form.num}</b>. Write it on your shorts before Day 1
+        and check in at the table when you arrive.
+      </div>
+    </div>
+  )
 
   if (submitted) return (
     <div style={{ minHeight:'100vh', background:'#020617', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32 }}>
@@ -1075,8 +1110,10 @@ function PlayerCheckIn({ onBack }) {
     <div style={{ minHeight:'100vh', background:'#020617' }}>
       <div style={{ background:G, padding:'24px 20px', textAlign:'center' }}>
         <div style={{ fontSize:13, color:'#ffffffaa', textTransform:'uppercase', letterSpacing:2, marginBottom:4 }}>Oregon Club Soccer</div>
-        <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>TRYOUT CHECK-IN</div>
-        <div style={{ fontSize:13, color:'#ffffffcc', marginTop:6 }}>Fill out the form and snap a photo.</div>
+        <div style={{ fontSize:28, fontWeight:700, color:Y, fontFamily:"'Geo',sans-serif" }}>{regMode ? 'TRYOUT REGISTRATION' : 'TRYOUT CHECK-IN'}</div>
+        <div style={{ fontSize:13, color:'#ffffffcc', marginTop:6 }}>
+          {regMode ? 'Sign up now \u2014 you\u2019ll check in at the table on Day 1.' : 'Fill out the form and snap a photo.'}
+        </div>
       </div>
       <div style={{ padding:20, maxWidth:480, margin:'0 auto' }}>
         <div style={{ display:'flex', gap:10, marginBottom:16 }}>
@@ -1149,7 +1186,7 @@ function EvalLogin({ onLogin, onBack }) {
 // ═══════════════════════════════════════════
 // SCORING CARD WITH TAGS + DEBOUNCED NOTES
 // ═══════════════════════════════════════════
-function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, onToggle }) {
+function ScoringCard({ player, scoreData, onScoreField, onBumpTag, expanded, onToggle }) {
   const sc = scoreData || {}
   const isScored = sc.game_ability != null && sc.intangibles != null
   const [localNotes, setLocalNotes] = useState(sc.notes || '')
@@ -1213,13 +1250,20 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
                 <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:2, textTransform:'uppercase', letterSpacing:1 }}>{cat}</div>
                 <div style={{ color:'#475569', fontSize:10, marginBottom:5 }}>{hint}</div>
                 <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-                  {[1,2,3,4,5,6,7,8,9,10].map(v => (
-                    <button key={v} onClick={()=>onScoreField(field,v)} style={{
+                  {[1,2,3,4,5,6,7,8,9,10].map(v => {
+                    const b = bandFor(v)
+                    return (
+                    <button key={v} onClick={()=>onScoreField(field,v)} title={b ? v+' — '+b.label+': '+b.blurb : String(v)} style={{
                       width:40, height:40, borderRadius:8, border:'none', background:sc[field]===v?G:'#1e293b',
                       color:sc[field]===v?Y:'#94a3b8', fontSize:16, fontWeight:700, cursor:'pointer',
                       boxShadow:sc[field]===v?'0 0 0 2px '+Y:'none',
                     }}>{v}</button>
-                  ))}
+                  )})}
+                </div>
+                {/* The chosen number, said in words — so a 7 means the same thing to everyone */}
+                <div style={{ marginTop:5, fontSize:10.5, minHeight:14,
+                  color: sc[field] ? (bandFor(sc[field])?.lo >= 7 ? '#6ee7b7' : bandFor(sc[field])?.lo >= 5 ? '#fcd34d' : '#fca5a5') : '#334155' }}>
+                  {sc[field] ? bandFor(sc[field]).label + ' — ' + bandFor(sc[field]).blurb : 'Pick a number to see what it means'}
                 </div>
               </div>
             )
@@ -1228,7 +1272,10 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
           {/* Quick tags — grouped, and GK-specific for keepers */}
           <div style={{ marginBottom:12 }}>
             <div style={{ color:'#94a3b8', fontSize:11, fontWeight:600, marginBottom:6, textTransform:'uppercase', letterSpacing:1 }}>
-              Quick Tags (tap to toggle){isGK(player) ? ' — Goalkeeper' : ''}
+              Quick Tags{isGK(player) ? ' — Goalkeeper' : ''}
+            </div>
+            <div style={{ color:'#475569', fontSize:10, marginBottom:6, lineHeight:1.4 }}>
+              Tap every time you see it — three good passes is three taps. Long press a tag to clear it.
             </div>
             {[{k:'pos',label:'Strengths'},{k:'neg',label:'Needs work'}].map(({k,label}) => {
               const src = isGK(player) ? GK_TAGS : POS_TAGS
@@ -1238,13 +1285,29 @@ function ScoringCard({ player, scoreData, onScoreField, onToggleTag, expanded, o
                   <div style={{ color:'#475569', fontSize:10, fontWeight:700, marginBottom:5, letterSpacing:1, textTransform:'uppercase' }}>{label}</div>
                   <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
                     {list.map(t => {
-                      const active = tags.includes(t.val)
-                      return <button key={t.val} onClick={()=>onToggleTag(t.val)} style={{
+                      const n = tags.filter(x => x === t.val).length
+                      const active = n > 0
+                      let timer = null
+                      const clear = () => { if (n) onBumpTag(t.val, 0) }
+                      return <button key={t.val}
+                        onClick={()=>onBumpTag(t.val, 1)}
+                        onContextMenu={e=>{e.preventDefault(); clear()}}
+                        onTouchStart={()=>{ timer = setTimeout(clear, 600) }}
+                        onTouchEnd={()=>clearTimeout(timer)}
+                        onTouchMove={()=>clearTimeout(timer)}
+                        title={active ? t.label+' \u00d7'+n+' \u2014 long press to clear' : t.label}
+                        style={{
                         padding:'5px 10px', borderRadius:16, border:'none', fontSize:11, fontWeight:600, cursor:'pointer',
+                        display:'inline-flex', alignItems:'center', gap:5,
                         background: active ? (t.pos ? G : '#7f1d1d') : '#1e293b',
                         color: active ? (t.pos ? Y : '#fca5a5') : (t.pos ? '#94a3b8' : '#b08a8a'),
                         boxShadow: active ? '0 0 0 1px '+(t.pos ? G : '#7f1d1d') : 'none',
-                      }}>{active?'✓ ':''}{t.label}</button>
+                      }}>
+                        <span>{t.label}</span>
+                        {active && <span style={{ fontSize:10, fontWeight:800, background:t.pos?Y:'#fca5a5',
+                          color:t.pos?G:'#450a0a', borderRadius:9, padding:'0 5px', minWidth:14, textAlign:'center' }}>{n}</span>}
+                      </button>
+                    })}
                     })}
                   </div>
                 </div>
@@ -1321,11 +1384,11 @@ function UploadEvalTab({ evaluators, players, currentDay, onSaved }) {
               imageContent,
               { type: 'text', text: `You are reading a scanned paper soccer tryout evaluation sheet. Extract evaluation data for each player.
 
-CRITICAL RULE ABOUT TAGS: Every player row has the SAME tags pre-printed on the sheet. These are NOT selected by default. A tag is ONLY selected if the evaluator physically drew on it — a circle around it, a check mark on it, an X on it, an underline beneath it, a highlighter mark, or any handwritten mark touching that specific tag cell. The vast majority of tags for each player will be UNMARKED (just clean printed text) — do NOT include those. If you are unsure whether a tag is marked, do NOT include it. Only include tags where there is a CLEAR visible mark.
+CRITICAL RULE ABOUT TAGS: Every player row has the SAME tags pre-printed on the sheet. These are NOT selected by default. A tag is ONLY selected if the evaluator physically drew on it — a circle around it, a check mark on it, an X on it, an underline beneath it, a highlighter mark, or any handwritten mark touching that specific tag cell. The vast majority of tags for each player will be UNMARKED (just clean printed text) — do NOT include those. If you are unsure whether a tag is marked, do NOT include it. Only include tags where there is a CLEAR visible mark. TALLIES: a tag may carry more than one mark (two circles, or tally strokes). Repeat that tag once per distinct mark, so three strokes on "Passing" means "+passing" appears three times in the array. One mark means it appears once.
 
 LAYOUT: Each player has 3 rows of tag cells. Row 1 has a "+" label followed by: 1st Touch, Speed, Decisions, Passing, Off-ball, 1v1, Work Rate, Vocal, Composed, Positioning, Elevates, Athletic, Soccer IQ. Row 2 has a "−" label followed by the same categories but as weaknesses (1st Touch, Speed, Decisions, Passing, Static, 1v1, Work Rate, Quiet, Composure, Positioning, No Impact, Unathletic, Slow Read). Row 3 has extra tags.
 
-SCORES: The GAME and COMPETE columns contain handwritten numbers 1-10. Read them carefully. If blank or unreadable, use null.
+SCORES: The GAME and COMPETE columns contain handwritten numbers 1-10. Read them carefully. If blank or unreadable, use null.\nSCALE: 1-2 well short, 3-4 below the standard, 5-6 borderline, 7-8 clear squad man, 9-10 above this level. This is context only \u2014 transcribe the number written, never your own judgement.
 
 K/C/? COLUMN: May contain K or ✓ (= "keep"), C or ✗ (= "cut"), or ? (= undecided). If blank, use null.
 
@@ -1762,6 +1825,18 @@ function EvalView({ evaluator, onLogout }) {
   const [addBusy, setAddBusy] = useState(false)
   const [addMsg, setAddMsg] = useState('')
   const [insightView, setInsightView] = useState('numbers')
+  const [briefOpen, setBriefOpen] = useState(true)
+  const [regMode, setRegMode] = useState(false)
+  useEffect(() => {
+    supabase.from('app_settings').select('value').eq('key','registration_mode').single()
+      .then(({ data }) => setRegMode(data?.value === 'on')).catch(() => {})
+  }, [])
+  const setRegistrationMode = async (on) => {
+    const { error } = await supabase.from('app_settings')
+      .upsert({ key:'registration_mode', value: on ? 'on' : 'off' }, { onConflict:'key' })
+    if (error) { alert('Could not change registration mode: ' + error.message); return }
+    setRegMode(on)
+  }
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
@@ -1961,11 +2036,17 @@ function EvalView({ evaluator, onLogout }) {
     loadAll()
   }
 
-  const toggleTag = async (playerId, tagVal) => {
+  // Tags are a tally, not a switch. Each tap appends another copy, so three good
+  // passes over two hours read as three. The array still holds plain tag values,
+  // so old rows and every reader of them keep working: the ones that dedupe see
+  // a set, the ones that count see counts.
+  const bumpTag = async (playerId, tagVal, delta) => {
     const existing = getScore(evaluator.id, playerId, currentDay)
     let tags = []
     if (existing?.tags) { tags = typeof existing.tags === 'string' ? JSON.parse(existing.tags) : existing.tags }
-    if (tags.includes(tagVal)) { tags = tags.filter(t => t !== tagVal) } else { tags.push(tagVal) }
+    if (delta > 0) tags.push(tagVal)
+    else if (delta === 0) tags = tags.filter(t => t !== tagVal)      // long press clears it
+    else { const i = tags.lastIndexOf(tagVal); if (i >= 0) tags.splice(i, 1) }
     const tagsStr = JSON.stringify(tags)
     if (existing) { await supabase.from('scores').update({ tags: tagsStr, updated_at: new Date().toISOString() }).eq('id', existing.id) }
     else { await supabase.from('scores').insert({ evaluator_id: evaluator.id, player_id: playerId, day_number: currentDay, tags: tagsStr }) }
@@ -2303,6 +2384,42 @@ function EvalView({ evaluator, onLogout }) {
       {/* ══ SCORING TAB ══ */}
       {view === 'score' && (
         <div style={{ padding:16 }}>
+          {/* The one step TeamGenius schedules and we never did: tell the
+              evaluators what the numbers mean before they start using them. */}
+          <div style={{ background:'#0f172a', border:'1px solid #1e293b', borderRadius:10, marginBottom:12, overflow:'hidden' }}>
+            <button onClick={()=>setBriefOpen(o=>!o)} style={{
+              width:'100%', display:'flex', alignItems:'center', gap:8, padding:'10px 14px',
+              background:'transparent', border:'none', cursor:'pointer', textAlign:'left' }}>
+              <span style={{ fontSize:14 }}>{'\ud83d\udcd8'}</span>
+              <span style={{ flex:1, color:'#e2e8f0', fontSize:12.5, fontWeight:600 }}>How to score — read this once</span>
+              <span style={{ color:'#475569', fontSize:16, transform:briefOpen?'rotate(180deg)':'rotate(0)', transition:'transform .2s' }}>{'\u25be'}</span>
+            </button>
+            {briefOpen && (
+              <div style={{ padding:'0 14px 13px' }}>
+                <div style={{ color:'#94a3b8', fontSize:12, lineHeight:1.5, marginBottom:10 }}>
+                  Two numbers per player, both 1–10. <b style={{color:'#e2e8f0'}}>GAME</b> is what he reads and executes.
+                  <b style={{color:'#e2e8f0'}}> COMPETE</b> is work rate, duels, coachability and how he answers a mistake.
+                  Score every player you watch, even the obvious ones — a man with one evaluation is a man we cut on one opinion.
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:3, marginBottom:10 }}>
+                  {SCALE_BANDS.map(band => (
+                    <div key={band.lo} style={{ display:'flex', alignItems:'baseline', gap:9 }}>
+                      <span style={{ flexShrink:0, width:38, textAlign:'center', fontFamily:"'Geo',sans-serif", fontSize:12, fontWeight:700,
+                        color: band.lo>=7?'#6ee7b7':band.lo>=5?'#fcd34d':'#fca5a5',
+                        background:'#1e293b', borderRadius:4, padding:'1px 0' }}>{band.lo}–{band.hi}</span>
+                      <span style={{ color:'#e2e8f0', fontSize:11.5, fontWeight:600 }}>{band.label}</span>
+                      <span style={{ color:'#64748b', fontSize:11 }}>{band.blurb}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ color:'#94a3b8', fontSize:12, lineHeight:1.5 }}>
+                  Tags are a <b style={{color:'#e2e8f0'}}>tally</b>, not a checkbox. Tap one every time you see the thing —
+                  three good passes is three taps. Long press to clear one. Notes are where anything the numbers miss goes.
+                </div>
+              </div>
+            )}
+          </div>
+
           {dayCheckedInPlayers.length===0 ? emptyState('⏳','No players checked in for Day '+currentDay+'.') : (<>
             {(() => { const ep = evalProgress.find(e=>e.id===evaluator.id); const pct = ep?.total ? ep.scored/ep.total*100 : 0; return (
               <div style={{ marginBottom:10, background:'#0f172a', borderRadius:10, padding:10 }}>
@@ -2322,7 +2439,7 @@ function EvalView({ evaluator, onLogout }) {
               <ScoringCard key={p.id} player={p}
                 scoreData={getScore(evaluator.id, p.id, currentDay)}
                 onScoreField={(field,val) => submitScoreField(p.id, field, val)}
-                onToggleTag={(tagVal) => toggleTag(p.id, tagVal)}
+                onBumpTag={(tagVal, delta) => bumpTag(p.id, tagVal, delta)}
                 expanded={expandedPlayer===p.id}
                 onToggle={()=>setExpandedPlayer(expandedPlayer===p.id?null:p.id)} />
             ))}
@@ -2673,6 +2790,31 @@ function EvalView({ evaluator, onLogout }) {
                   }} style={{ padding:'10px 14px', borderRadius:8, border:'none', background:Y, color:G, fontSize:14, fontWeight:700, fontFamily:"'Geo',sans-serif", cursor:'pointer' }}>{dayLabel(currentDay+1).toUpperCase()} →</button>}
               </div>
             </div>
+          </div>
+
+          {/* Knowing the numbers a week early is the difference between planning a
+              session for 54 and re-planning it three times. */}
+          <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
+            <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:4 }}>Pre-Registration</div>
+            <div style={{ color:'#64748b', fontSize:12, marginBottom:12, lineHeight:1.45 }}>
+              On, the check-in link becomes a sign-up form: players register ahead of Day 1, get a number,
+              and land on the roster <b style={{color:'#94a3b8'}}>without</b> being marked present. Turn it off on Day 1
+              and tick people off at the table. You get your head count a week early instead of on the night.
+            </div>
+            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+              {[[true,'Registration open'],[false,'Day-of check-in']].map(([v,l]) => (
+                <button key={String(v)} onClick={()=>setRegistrationMode(v)} style={{
+                  flex:1, padding:'9px 10px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700,
+                  border:'1px solid '+(regMode===v?Y+'70':'#334155'),
+                  background:regMode===v?'#1e293b':'transparent', color:regMode===v?Y:'#64748b' }}>{l}</button>
+              ))}
+            </div>
+            {regMode && (
+              <div style={{ marginTop:10, fontSize:12, color:'#fcd34d', background:'#78350f40', borderRadius:8, padding:'8px 11px', lineHeight:1.45 }}>
+                Registration is open. {activePlayers.length} signed up so far — nobody is marked present yet.
+                Switch to day-of check-in before Day 1 starts.
+              </div>
+            )}
           </div>
 
           {/* Captains and injured returners never pass through check-in, so without
