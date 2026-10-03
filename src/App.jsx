@@ -37,6 +37,165 @@ const POS_LIST_GROUPS = [
   { key: 'GK', label: 'GK', match: p => (p.pos1||'')==='GK' },
 ]
 
+// ── TRYOUT BREAKDOWNS ──────────────────────────────────────────────────────
+// Straight counts, no opinions. Every table is "how many of X in bucket Y".
+// Position is taken from the FIRST listed position only, so each man is
+// counted once and every column totals to the squad.
+
+const B_FAMILY = { GK:'GK', CB:'DEF', RB:'DEF', LB:'DEF', 'RB/LB':'DEF', CDM:'MID', CM:'MID',
+                   CAM:'MID', LW:'WIDE', RW:'WIDE', Wing:'WIDE', ST:'FWD', CF:'FWD' }
+const FAM_ORDER  = ['GK','DEF','MID','WIDE','FWD']
+const FAM_NAME   = { GK:'GK', DEF:'Defenders', MID:'Midfield', WIDE:'Wingers', FWD:'Strikers' }
+const YEAR_ORDER = ['FR','SOPH','JUN','SEN','GRAD']
+const YEAR_NAME  = { FR:'Freshman', SOPH:'Sophomore', JUN:'Junior', SEN:'Senior', GRAD:'Grad' }
+
+const famOf  = p => B_FAMILY[p?.pos1] || 'OTHER'
+const yearOf = p => YEAR_ORDER.includes(p?.year) ? p.year : 'OTHER'
+const avg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null
+const f1  = v => v == null ? '—' : (Math.round(v*10)/10).toFixed(1)
+const pct = (n,d) => d ? Math.round(n/d*100) + '%' : '—'
+
+function buildBreakdowns({ players = [], scores = [], checkins = [],
+                           currentDay = 1, tryoutDays = [1,2,3,4] } = {}) {
+  const real      = players.filter(p => !String(p.id).startsWith('demo-'))
+  const trialists = real.filter(p => !p.exempt_reason)      // the ones cuts apply to
+  const squad     = real.filter(p => p.status === 'active') // includes captains / returners
+  const days      = tryoutDays.filter(d => d <= currentDay)
+  const tables    = []
+
+  const scoreOf = (() => {
+    const m = new Map()
+    real.forEach(p => {
+      const per = new Map()
+      scores.filter(s => s.player_id === p.id).forEach(s => {
+        const v = [s.game_ability, s.intangibles].filter(x => x != null)
+        if (v.length) per.set(s.evaluator_id, avg(v))
+      })
+      m.set(p.id, per.size ? avg([...per.values()]) : null)
+    })
+    return id => m.get(id)
+  })()
+
+  const cutOn  = d => trialists.filter(p => p.status === 'cut' && p.cut_after_day === d)
+  const inAfter = d => trialists.filter(p => p.status === 'active' || (p.cut_after_day ?? 99) > d)
+
+  // ── 1. The funnel ────────────────────────────────────────────────────────
+  tables.push({
+    title: 'The funnel',
+    note: 'Trialists only. Captains and injured returners are not included — they were never in the cut pool.',
+    columns: ['Round', 'Started', 'Cut', 'Remaining', 'Kept %'],
+    rows: days.map(d => {
+      const started = d === days[0] ? trialists.length : inAfter(d-1).length
+      const out = cutOn(d).length
+      return ['Day ' + d, started, out || '—', started - out, pct(started - out, started)]
+    }),
+  })
+
+  // ── 2 & 3. Who went, by bucket, by round ─────────────────────────────────
+  const cutTable = (title, note, order, nameOf, keyOf) => {
+    const keys = order.filter(k => trialists.some(p => keyOf(p) === k))
+    if (trialists.some(p => keyOf(p) === 'OTHER')) keys.push('OTHER')
+    return {
+      title, note,
+      columns: ['', ...days.map(d => 'D' + d), 'Cut', 'Still in', 'Kept %'],
+      rows: keys.map(k => {
+        const pool = trialists.filter(p => keyOf(p) === k)
+        const perDay = days.map(d => cutOn(d).filter(p => keyOf(p) === k).length || '—')
+        const gone = pool.filter(p => p.status === 'cut').length
+        const stay = pool.length - gone
+        return [nameOf[k] || k, ...perDay, gone || '—', stay, pct(stay, pool.length)]
+      }),
+      totals: ['All', ...days.map(d => cutOn(d).length || '—'),
+               trialists.filter(p => p.status === 'cut').length || '—',
+               trialists.filter(p => p.status === 'active').length,
+               pct(trialists.filter(p => p.status === 'active').length, trialists.length)],
+    }
+  }
+  tables.push(cutTable('Cut by position, by round',
+    'First listed position. "Kept %" is how much of that position group survived.',
+    FAM_ORDER, FAM_NAME, famOf))
+  tables.push(cutTable('Cut by school year, by round',
+    'Of everyone who trialled in that year, how many went each round and how many are left.',
+    YEAR_ORDER, YEAR_NAME, yearOf))
+
+  // ── 4. Squad composition, position against year ──────────────────────────
+  const sqYears = YEAR_ORDER.filter(y => squad.some(p => yearOf(p) === y))
+  tables.push({
+    title: 'Squad: position against year',
+    note: 'Everyone still in, captains and returners included. The bottom row is your year mix; the right column is your position mix.',
+    columns: ['', ...sqYears.map(y => y), 'Total'],
+    rows: FAM_ORDER.filter(f => squad.some(p => famOf(p) === f)).map(f => {
+      const row = squad.filter(p => famOf(p) === f)
+      return [FAM_NAME[f], ...sqYears.map(y => row.filter(p => yearOf(p) === y).length || '—'), row.length]
+    }),
+    totals: ['All', ...sqYears.map(y => squad.filter(p => yearOf(p) === y).length), squad.length],
+  })
+
+  // ── 5. Squad vs the pool that turned up ──────────────────────────────────
+  tables.push({
+    title: 'Squad mix against the trial pool',
+    note: 'Whether the squad skews older or younger than the group you started with.',
+    columns: ['Year', 'Trialled', 'In squad', 'Pool %', 'Squad %'],
+    rows: YEAR_ORDER.filter(y => trialists.some(p => yearOf(p) === y) || squad.some(p => yearOf(p) === y))
+      .map(y => {
+        const pool = trialists.filter(p => yearOf(p) === y).length
+        const sq = squad.filter(p => yearOf(p) === y).length
+        return [YEAR_NAME[y], pool, sq, pct(pool, trialists.length), pct(sq, squad.length)]
+      }),
+  })
+
+  // ── 6. Travelling vs practice squad ──────────────────────────────────────
+  if (squad.some(p => p.practice_squad)) {
+    tables.push({
+      title: 'Travelling squad against practice squad',
+      columns: ['Position', 'Travelling', 'Practice', 'Total'],
+      rows: FAM_ORDER.filter(f => squad.some(p => famOf(p) === f)).map(f => {
+        const row = squad.filter(p => famOf(p) === f)
+        const pr = row.filter(p => p.practice_squad).length
+        return [FAM_NAME[f], row.length - pr, pr || '—', row.length]
+      }),
+      totals: ['All', squad.filter(p => !p.practice_squad).length, squad.filter(p => p.practice_squad).length, squad.length],
+    })
+  }
+
+  // ── 7 & 8. Average score by bucket ───────────────────────────────────────
+  const scoreTable = (title, order, nameOf, keyOf) => {
+    const keys = order.filter(k => trialists.some(p => keyOf(p) === k))
+    return {
+      title,
+      note: 'Average across every evaluator who scored the man. Blank means nobody in that bucket was scored.',
+      columns: ['', 'Kept', 'Cut', 'All', 'n scored'],
+      rows: keys.map(k => {
+        const pool = trialists.filter(p => keyOf(p) === k && scoreOf(p.id) != null)
+        const kp = pool.filter(p => p.status === 'active').map(p => scoreOf(p.id))
+        const ct = pool.filter(p => p.status === 'cut').map(p => scoreOf(p.id))
+        return [nameOf[k] || k, f1(avg(kp)), f1(avg(ct)), f1(avg(pool.map(p => scoreOf(p.id)))), pool.length]
+      }),
+    }
+  }
+  tables.push(scoreTable('Average score by position', FAM_ORDER, FAM_NAME, famOf))
+  tables.push(scoreTable('Average score by school year', YEAR_ORDER, YEAR_NAME, yearOf))
+
+  // ── 9. Attendance each day ───────────────────────────────────────────────
+  tables.push({
+    title: 'Attendance by day',
+    note: 'Counted against everyone still in the tryout that day, so the total shrinks as you cut.',
+    columns: ['Round', 'Expected', 'Present', 'Excused', 'Absent'],
+    rows: days.map(d => {
+      const pool = d === days[0] ? trialists : inAfter(d-1)
+      let present = 0, excused = 0
+      pool.forEach(p => {
+        const row = checkins.find(c => c.player_id === p.id && c.day_number === d)
+        if (row?.checked_in) present++
+        else if (row?.excused) excused++
+      })
+      return ['Day ' + d, pool.length, present, excused || '—', pool.length - present - excused || '—']
+    }),
+  })
+
+  return tables
+}
+
 // ── TRYOUT INSIGHTS ────────────────────────────────────────────────────────
 // Deterministic analysis over the tryout data. Every finding below is
 // arithmetic on rows you already have — no model call, no API key, no network.
@@ -1595,6 +1754,7 @@ function EvalView({ evaluator, onLogout }) {
   const [addForm, setAddForm] = useState({ first:'', last:'', pos1:'', pos2:'', year:'', num:'', phone:'', email:'', reason:'captain' })
   const [addBusy, setAddBusy] = useState(false)
   const [addMsg, setAddMsg] = useState('')
+  const [insightView, setInsightView] = useState('numbers')
   const isCheckedIn = useCallback((playerId, day) => checkins.find(c => c.player_id === playerId && c.day_number === day)?.checked_in || false, [checkins])
   const getScore = useCallback((evalId, playerId, day) => scores.find(s => s.evaluator_id === evalId && s.player_id === playerId && s.day_number === day), [scores])
   const activePlayers = useMemo(() => players.filter(p => p.status === 'active'), [players])
@@ -1718,6 +1878,9 @@ function EvalView({ evaluator, onLogout }) {
   const insights = useMemo(
     () => buildInsights({ players, scores, evaluators, checkins, currentDay, tryoutDays: TRYOUT_DAYS }),
     [players, scores, evaluators, checkins, currentDay])
+  const breakdowns = useMemo(
+    () => buildBreakdowns({ players, scores, checkins, currentDay, tryoutDays: TRYOUT_DAYS }),
+    [players, scores, checkins, currentDay])
 
   const squadCounts = useMemo(() => {
     const tally = (group) => {
@@ -2276,6 +2439,16 @@ function EvalView({ evaluator, onLogout }) {
             Every line says what was counted, so you can check any of it by hand.
           </div>
 
+          <div style={{ display:'flex', gap:6, marginBottom:12 }}>
+            {[['numbers','Numbers'],['flags','Flags']].map(([v,l]) => (
+              <button key={v} onClick={()=>setInsightView(v)} style={{
+                flex:1, padding:'7px 10px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700,
+                border:'1px solid '+(insightView===v?Y+'70':'#334155'),
+                background:insightView===v?'#1e293b':'transparent',
+                color:insightView===v?Y:'#64748b' }}>{l}</button>
+            ))}
+          </div>
+
           <div style={{ display:'flex', gap:8, marginBottom:14 }}>
             {[['Still in', insights.headline.kept, Y],
               ['Cut', insights.headline.cut, '#fca5a5'],
@@ -2288,7 +2461,41 @@ function EvalView({ evaluator, onLogout }) {
             ))}
           </div>
 
-          {insights.findings.length === 0
+          {insightView === 'numbers' ? (
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              {breakdowns.map((t, ti) => (
+                <div key={ti} style={{ background:'#0f172a', borderRadius:10, padding:'12px 0 2px' }}>
+                  <div style={{ padding:'0 14px' }}>
+                    <div style={{ color:'#f1f5f9', fontSize:14, fontWeight:600 }}>{t.title}</div>
+                    {t.note && <div style={{ color:'#64748b', fontSize:11, lineHeight:1.45, marginTop:3 }}>{t.note}</div>}
+                  </div>
+                  <div style={{ overflowX:'auto', marginTop:9, padding:'0 14px 12px' }}>
+                    <table style={{ borderCollapse:'collapse', width:'100%', minWidth:Math.max(260, t.columns.length*58) }}>
+                      <thead><tr>{t.columns.map((c,i) => (
+                        <th key={i} style={{ textAlign:i===0?'left':'center', padding:'5px 7px', fontSize:10,
+                          textTransform:'uppercase', letterSpacing:.6, color:'#64748b', fontWeight:700,
+                          borderBottom:'1px solid #1e293b', whiteSpace:'nowrap' }}>{c}</th>))}</tr></thead>
+                      <tbody>
+                        {t.rows.map((r,ri) => (
+                          <tr key={ri}>{r.map((c,ci) => (
+                            <td key={ci} style={{ textAlign:ci===0?'left':'center', padding:'6px 7px', fontSize:13,
+                              color: ci===0 ? '#cbd5e1' : c==='—' ? '#334155' : '#e2e8f0',
+                              fontWeight: ci===0?600:400, fontVariantNumeric:'tabular-nums',
+                              borderBottom:'1px solid #15202f', whiteSpace:'nowrap' }}>{c}</td>))}</tr>
+                        ))}
+                        {t.totals && (
+                          <tr>{t.totals.map((c,ci) => (
+                            <td key={ci} style={{ textAlign:ci===0?'left':'center', padding:'7px', fontSize:13,
+                              color:Y, fontWeight:700, fontVariantNumeric:'tabular-nums',
+                              borderTop:'1px solid #334155' }}>{c}</td>))}</tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : insights.findings.length === 0
             ? emptyState('\ud83d\udcca','Not enough scored players yet. Come back after the first round of evaluations.')
             : (
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
@@ -2317,8 +2524,9 @@ function EvalView({ evaluator, onLogout }) {
           )}
 
           <div style={{ marginTop:16, color:'#475569', fontSize:11, lineHeight:1.5 }}>
-            These are observations, not verdicts. Position need, attitude and what you saw with your own eyes
-            all sit outside the numbers, and the numbers do not know about any of them.
+            {insightView === 'numbers'
+              ? 'Position is the first one a player listed, so every man is counted once and the columns total to the squad. Captains and injured returners sit outside the cut tables \u2014 they were never in the pool \u2014 but inside the squad tables.'
+              : 'These are observations, not verdicts. Position need, attitude and what you saw with your own eyes all sit outside the numbers, and the numbers do not know about any of them.'}
           </div>
         </div>
       )}
