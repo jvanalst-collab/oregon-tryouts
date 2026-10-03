@@ -201,6 +201,13 @@ function buildBreakdowns({ players = [], scores = [], checkins = [],
 // arithmetic on rows you already have — no model call, no API key, no network.
 // Each finding states what was counted so a coach can check it by hand.
 
+// GAME and COMPETE are scored 1-10 on the printed sheet. Every threshold below
+// is expressed against that range — halve them if the scale ever becomes 1-5.
+const SCALE_MAX   = 10
+const SCALE_DRIFT = 0.8   // an evaluator this far off the group average is marking to a different scale
+const SCALE_FLAT  = 1.1   // below this spread he is giving nearly everyone the same mark
+const SCALE_SPLIT = 4     // evaluators this far apart on one player disagree about him
+
 const FAMILY = { GK:'GK', CB:'DEF', RB:'DEF', LB:'DEF', 'RB/LB':'DEF', CDM:'MID', CM:'MID',
                  CAM:'MID', LW:'WIDE', RW:'WIDE', Wing:'WIDE', ST:'FWD', CF:'FWD' }
 const XI_NEED = { GK:1, DEF:4, MID:3, WIDE:2, FWD:1 }   // 4-3-3
@@ -291,9 +298,9 @@ function buildInsights({ players = [], scores = [], evaluators = [], checkins = 
     const all = evStats.flatMap(e => scores.filter(s => s.evaluator_id === e.ev.id)
       .flatMap(s => [s.game_ability, s.intangibles].filter(v => v != null)))
     const gm = mean(all)
-    const off = evStats.filter(e => Math.abs(e.mean - gm) >= 0.4)
+    const off = evStats.filter(e => Math.abs(e.mean - gm) >= SCALE_DRIFT)
       .sort((a,b) => Math.abs(b.mean-gm) - Math.abs(a.mean-gm))
-    const flat = evStats.filter(e => e.sd != null && e.sd < 0.55)
+    const flat = evStats.filter(e => e.sd != null && e.sd < SCALE_FLAT)
     if (off.length) {
       add('watch', 'Evaluators are not on the same scale',
         'The group average is ' + r1(gm) + '. These evaluators sit far enough from it that a player’s score depends partly on who watched him. Worth a word before the next round rather than a correction after it.',
@@ -306,19 +313,19 @@ function buildInsights({ players = [], scores = [], evaluators = [], checkins = 
     }
     if (!off.length && !flat.length) {
       add('ok', 'Evaluators are broadly calibrated',
-        'All ' + evStats.length + ' evaluators sit within 0.4 of the group average of ' + r1(gm) + ', and all are separating players rather than marking everyone alike.')
+        'All ' + evStats.length + ' evaluators sit within ' + SCALE_DRIFT + ' of the group average of ' + r1(gm) + ', and all are separating players rather than marking everyone alike.')
     }
   }
 
   // ── 3. Which calls were contested? ────────────────────────────────────────
   const contested = real
     .map(p => ({ p, a: avg.get(p.id) }))
-    .filter(x => x.a && x.a.nEvals >= 2 && x.a.spread >= 2)
+    .filter(x => x.a && x.a.nEvals >= 2 && x.a.spread >= SCALE_SPLIT)
     .sort((a,b) => b.a.spread - a.a.spread)
     .slice(0, 8)
   if (contested.length) {
     add('watch', contested.length + ' player' + (contested.length===1?'':'s') + ' your evaluators disagree about',
-      'Two or more points apart on the same man. These are the ones to watch together on the next pitch, because right now the decision depends on whose sheet you read.',
+      SCALE_SPLIT + ' or more points apart on the same man, on a ten-point scale. These are the ones to watch together on the next pitch, because right now the decision depends on whose sheet you read.',
       contested.map(x => '#' + x.p.pinnie_num + ' ' + name(x.p) + ' — ' + r1(x.a.spread) +
         ' points apart across ' + x.a.nEvals + ' evaluators (avg ' + r1(x.a.total) + ')' +
         (x.p.status === 'cut' ? ' · already cut' : '')))
@@ -363,7 +370,7 @@ function buildInsights({ players = [], scores = [], evaluators = [], checkins = 
       if (mo == null || mi == null) return null
       return { d, n: outs.length, gap: mi - mo, mo, mi }
     }).filter(Boolean)
-    const tight = lines.filter(l => l.gap < 0.4)
+    const tight = lines.filter(l => l.gap < SCALE_DRIFT)
     if (lines.length) {
       add(tight.length ? 'watch' : 'ok',
         tight.length ? 'Round ' + tight.map(l=>l.d).join(' and ') + ' cut close to the line' : 'Each round separated clearly',
