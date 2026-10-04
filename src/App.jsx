@@ -1826,6 +1826,7 @@ function EvalView({ evaluator, onLogout }) {
   const [addMsg, setAddMsg] = useState('')
   const [insightView, setInsightView] = useState('numbers')
   const [briefOpen, setBriefOpen] = useState(true)
+  const [posShowPractice, setPosShowPractice] = useState(false)
   const [regMode, setRegMode] = useState(false)
   useEffect(() => {
     supabase.from('app_settings').select('value').eq('key','registration_mode').single()
@@ -1963,6 +1964,12 @@ function EvalView({ evaluator, onLogout }) {
   const breakdowns = useMemo(
     () => buildBreakdowns({ players, scores, checkins, currentDay, tryoutDays: TRYOUT_DAYS }),
     [players, scores, checkins, currentDay])
+
+  // Who the pitch map draws. Practice-squad men are on the squad but not in the
+  // travelling party, so they are off the map unless you ask for them.
+  const positionPlayers = useMemo(
+    () => posShowPractice ? activePlayers : activePlayers.filter(p => !isPractice(p)),
+    [activePlayers, posShowPractice])
 
   const squadCounts = useMemo(() => {
     const tally = (group) => {
@@ -2658,7 +2665,20 @@ function EvalView({ evaluator, onLogout }) {
       {/* ══ POSITIONS TAB ══ */}
       {view === 'positions' && (
         <div style={{ padding:16 }}>
-          {activePlayers.length === 0 ? emptyState('⚽','No players to display.') : (<>
+          {/* The pitch map is for picking a side, so whether the practice squad
+              belongs on it depends on what you are doing — hence a switch. */}
+          {squadCounts.practice > 0 && (
+            <div style={{ display:'flex', gap:6, marginBottom:12 }}>
+              {[[false,'Travelling squad ('+squadCounts.official+')'],[true,'Include practice ('+(squadCounts.official+squadCounts.practice)+')']].map(([v,l]) => (
+                <button key={String(v)} onClick={()=>setPosShowPractice(v)} style={{
+                  flex:1, padding:'7px 10px', borderRadius:8, cursor:'pointer', fontSize:12, fontWeight:700,
+                  border:'1px solid '+(posShowPractice===v?Y+'70':'#334155'),
+                  background:posShowPractice===v?'#1e293b':'transparent',
+                  color:posShowPractice===v?Y:'#64748b' }}>{l}</button>
+              ))}
+            </div>
+          )}
+          {positionPlayers.length === 0 ? emptyState('⚽','No players to display.') : (<>
             {/* Formation Diagram */}
             <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
               <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>4-3-3 Formation View</div>
@@ -2670,7 +2690,7 @@ function EvalView({ evaluator, onLogout }) {
                 <div style={{ position:'absolute', top:0, left:'20%', right:'20%', height:'18%', border:'1px solid #ffffff15', borderTop:'none' }} />
                 {/* Position slots */}
                 {FORMATION_SLOTS.map(slot => {
-                  const matchingPlayers = activePlayers.filter(p => {
+                  const matchingPlayers = positionPlayers.filter(p => {
                     const p1 = (p.pos1||'').toUpperCase(), p2 = (p.pos2||'').toUpperCase()
                     // For wings, check side preference
                     if (slot.key === 'LW') return ['LW'].some(x => p1.includes(x)) || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)) && !['RW'].some(x => p1.includes(x)))
@@ -2685,7 +2705,7 @@ function EvalView({ evaluator, onLogout }) {
                     displayPlayers = matchingPlayers.slice(0, Math.ceil(matchingPlayers.length/2))
                   }
                   if (slot.key === 'CB2') {
-                    const allCBs = activePlayers.filter(p => slot.match.some(x => (p.pos1||'').toUpperCase().includes(x.toUpperCase())||(p.pos2||'').toUpperCase().includes(x.toUpperCase())))
+                    const allCBs = positionPlayers.filter(p => slot.match.some(x => (p.pos1||'').toUpperCase().includes(x.toUpperCase())||(p.pos2||'').toUpperCase().includes(x.toUpperCase())))
                     displayPlayers = allCBs
                   }
                   // Skip CB slot (CB2 handles all)
@@ -2695,7 +2715,7 @@ function EvalView({ evaluator, onLogout }) {
                       <div style={{ fontSize:10, color:Y, fontWeight:700, fontFamily:"'Geo',sans-serif", marginBottom:3, textTransform:'uppercase', textShadow:'0 1px 3px rgba(0,0,0,0.5)' }}>{slot.label}</div>
                       {(slot.key==='CB2' ? displayPlayers : matchingPlayers).slice(0,5).map(p => (
                         <div key={p.id} style={{ fontSize:9, color:'#e2e8f0', background:'#00000060', padding:'1px 5px', borderRadius:3, marginBottom:1, whiteSpace:'nowrap' }}>
-                          #{p.pinnie_num} {p.last_name}
+                          #{p.pinnie_num} {p.first_name}
                         </div>
                       ))}
                       {(slot.key==='CB2' ? displayPlayers : matchingPlayers).length > 5 && (
@@ -2712,7 +2732,7 @@ function EvalView({ evaluator, onLogout }) {
               <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:12 }}>Position Groups</div>
               <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))', gap:16 }}>
                 {POS_LIST_GROUPS.map(group => {
-                  const groupPlayers = activePlayers.filter(group.match).sort((a,b)=>a.pinnie_num-b.pinnie_num)
+                  const groupPlayers = positionPlayers.filter(group.match).sort((a,b)=>a.pinnie_num-b.pinnie_num)
                   if (groupPlayers.length === 0) return null
                   return (
                     <div key={group.key}>
