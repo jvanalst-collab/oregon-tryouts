@@ -1971,6 +1971,37 @@ function EvalView({ evaluator, onLogout }) {
     () => posShowPractice ? activePlayers : activePlayers.filter(p => !isPractice(p)),
     [activePlayers, posShowPractice])
 
+  // Which players sit in each slot of the 4-3-3. Hoisted out of the render so
+  // the pitch can be sized from the tallest stack before anything is drawn.
+  const slotPlayers = useMemo(() => {
+    const hit = (p, keys) => keys.some(x => (p.pos1||'').toUpperCase().includes(x.toUpperCase()) || (p.pos2||'').toUpperCase().includes(x.toUpperCase()))
+    const m = {}
+    FORMATION_SLOTS.forEach(slot => {
+      if (slot.key === 'CB') { m[slot.key] = []; return }         // CB2 carries every centre-back
+      if (slot.key === 'CB2') { m[slot.key] = positionPlayers.filter(p => hit(p, slot.match)); return }
+      m[slot.key] = positionPlayers.filter(p => {
+        const p1 = (p.pos1||'').toUpperCase(), p2 = (p.pos2||'').toUpperCase()
+        if (slot.key === 'LW') return p1.includes('LW') || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)) && !p1.includes('RW'))
+        if (slot.key === 'RW') return p1.includes('RW') || ['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x))
+        return hit(p, slot.match)
+      })
+    })
+    return m
+  }, [positionPlayers])
+
+  // Days 1-4 can hold 90-odd trialists, so the stacks are capped to keep the
+  // pitch readable. On the squad day there are thirty men and you want to see
+  // every one of them, so nothing is hidden and the pitch grows to fit.
+  const posCap = currentDay === SQUAD_DAY ? Infinity : 5
+  const posTallest = useMemo(
+    () => Math.max(1, ...FORMATION_SLOTS.map(sl => Math.min((slotPlayers[sl.key]||[]).length, posCap === Infinity ? 99 : posCap))),
+    [slotPlayers, posCap])
+  // 130% is right for five-deep stacks; past that each extra name needs room.
+  // Showing everyone needs both a taller pitch and tighter name rows — at the
+  // normal row height the CM and CDM stacks collide whatever the height.
+  const posDense = posCap === Infinity && posTallest > 5
+  const pitchPad = 130 + Math.max(0, posTallest - 5) * 12
+
   const squadCounts = useMemo(() => {
     const tally = (group) => {
       const st = p => attendanceState(checkins, p.id, currentDay)
@@ -2682,7 +2713,7 @@ function EvalView({ evaluator, onLogout }) {
             {/* Formation Diagram */}
             <div style={{ background:'#0f172a', borderRadius:12, padding:16, marginBottom:16 }}>
               <div style={{ color:'#94a3b8', fontSize:11, textTransform:'uppercase', letterSpacing:1, marginBottom:10 }}>4-3-3 Formation View</div>
-              <div style={{ position:'relative', width:'100%', paddingBottom:'130%', background:'linear-gradient(180deg, #0d3320 0%, #154733 50%, #0d3320 100%)', borderRadius:12, border:'2px solid #1e5c3a', overflow:'hidden' }}>
+              <div style={{ position:'relative', width:'100%', paddingBottom:pitchPad+'%', background:'linear-gradient(180deg, #0d3320 0%, #154733 50%, #0d3320 100%)', borderRadius:12, border:'2px solid #1e5c3a', overflow:'hidden' }}>
                 {/* Field markings */}
                 <div style={{ position:'absolute', top:'50%', left:'10%', right:'10%', height:1, background:'#ffffff20' }} />
                 <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:60, height:60, borderRadius:'50%', border:'1px solid #ffffff20' }} />
@@ -2690,36 +2721,19 @@ function EvalView({ evaluator, onLogout }) {
                 <div style={{ position:'absolute', top:0, left:'20%', right:'20%', height:'18%', border:'1px solid #ffffff15', borderTop:'none' }} />
                 {/* Position slots */}
                 {FORMATION_SLOTS.map(slot => {
-                  const matchingPlayers = positionPlayers.filter(p => {
-                    const p1 = (p.pos1||'').toUpperCase(), p2 = (p.pos2||'').toUpperCase()
-                    // For wings, check side preference
-                    if (slot.key === 'LW') return ['LW'].some(x => p1.includes(x)) || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)) && !['RW'].some(x => p1.includes(x)))
-                    if (slot.key === 'RW') return ['RW'].some(x => p1.includes(x)) || (['WING','WINGER'].some(x => p1.includes(x)||p2.includes(x)))
-                    if (slot.key === 'CB2') return slot.match.some(x => p1.includes(x.toUpperCase())||p2.includes(x.toUpperCase()))
-                    if (slot.key === 'CB') return false // CB2 handles all CBs
-                    return slot.match.some(x => p1.includes(x.toUpperCase())||p2.includes(x.toUpperCase()))
-                  })
-                  // For CB, split into two groups
-                  let displayPlayers = matchingPlayers
-                  if (slot.key === 'CB') {
-                    displayPlayers = matchingPlayers.slice(0, Math.ceil(matchingPlayers.length/2))
-                  }
-                  if (slot.key === 'CB2') {
-                    const allCBs = positionPlayers.filter(p => slot.match.some(x => (p.pos1||'').toUpperCase().includes(x.toUpperCase())||(p.pos2||'').toUpperCase().includes(x.toUpperCase())))
-                    displayPlayers = allCBs
-                  }
-                  // Skip CB slot (CB2 handles all)
-                  if (slot.key === 'CB') return null
+                  if (slot.key === 'CB') return null        // CB2 carries every centre-back
+                  const list = slotPlayers[slot.key] || []
+                  const shown = posCap === Infinity ? list : list.slice(0, posCap)
                   return (
-                    <div key={slot.key} style={{ position:'absolute', left:slot.x+'%', top:slot.y+'%', transform:'translate(-50%,-50%)', textAlign:'center', minWidth:70, maxWidth:100 }}>
+                    <div key={slot.key} style={{ position:'absolute', left:Math.min(Math.max(slot.x, 15), 85)+'%', top:slot.y+'%', transform:'translate(-50%,-50%)', textAlign:'center', minWidth:posDense?60:70, maxWidth:posDense?92:100 }}>
                       <div style={{ fontSize:10, color:Y, fontWeight:700, fontFamily:"'Geo',sans-serif", marginBottom:3, textTransform:'uppercase', textShadow:'0 1px 3px rgba(0,0,0,0.5)' }}>{slot.label}</div>
-                      {(slot.key==='CB2' ? displayPlayers : matchingPlayers).slice(0,5).map(p => (
-                        <div key={p.id} style={{ fontSize:9, color:'#e2e8f0', background:'#00000060', padding:'1px 5px', borderRadius:3, marginBottom:1, whiteSpace:'nowrap' }}>
+                      {shown.map(p => (
+                        <div key={p.id} style={{ fontSize:posDense?8:9, color:'#e2e8f0', background:'#00000060', padding:posDense?'0 4px':'1px 5px', borderRadius:3, marginBottom:1, whiteSpace:'nowrap' }}>
                           #{p.pinnie_num} {p.first_name}
                         </div>
                       ))}
-                      {(slot.key==='CB2' ? displayPlayers : matchingPlayers).length > 5 && (
-                        <div style={{ fontSize:8, color:'#ffffff60' }}>+{(slot.key==='CB2' ? displayPlayers : matchingPlayers).length-5} more</div>
+                      {list.length > shown.length && (
+                        <div style={{ fontSize:8, color:'#ffffff60' }}>+{list.length - shown.length} more</div>
                       )}
                     </div>
                   )
