@@ -911,6 +911,81 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
   ws4.views = [{ state:'frozen', ySplit:HDR }]
   ;[8,32,18,38,20,10,12,10,11,11].forEach((w,i) => ws4.getColumn(i+1).width = w)
 
+  // ═══ SHEETS 5+: EVERYONE WHO TRIED OUT, AND EACH ROUND OF CUTS ═══
+  // The Contact List above only holds men still in. These are for the people who
+  // are not: the whole trial pool, and one tab per round so you can message the
+  // group that went that night without picking names out of a list.
+  const everyone = players
+    .filter(p => !String(p.id).startsWith('demo-'))
+    .sort((a,b) => a.pinnie_num - b.pinnie_num)
+
+  const statusOf = p => p.status === 'cut' ? ('Cut D' + (p.cut_after_day ?? '?'))
+                      : isPractice(p) ? 'Practice' : 'Squad'
+
+  const contactSheet = (tabName, title, subtitle, group, withStatus) => {
+    if (!group.length) return
+    const w = wb.addWorksheet(tabName)
+    const cols = ['#','Name','Phone','Email','Position','Year','Days', ...(withStatus ? ['Status'] : []), 'Paid']
+    const last = cols.length
+    w.mergeCells(1,1,1,last)
+    w.getCell(1,1).value = title + '   (' + group.length + ')'
+    w.getCell(1,1).font = f14b
+    if (subtitle) {
+      w.mergeCells(2,1,2,last)
+      const sc = w.getCell(2,1); sc.value = subtitle
+      sc.font = { name:'Arial', size:11, italic:true, color:{ argb:'FF666666' } }
+    }
+    const dg = x => String(x||'').replace(/\D/g,'')
+    const ph = x => { const d = dg(x)
+      if (d.length === 10) return '('+d.slice(0,3)+') '+d.slice(3,6)+'-'+d.slice(6)
+      if (d.length === 11 && d[0] === '1') return '('+d.slice(1,4)+') '+d.slice(4,7)+'-'+d.slice(7)
+      return x || '' }
+    ;[['EMAILS  (paste into BCC)', group.map(x => x.email).filter(Boolean).join('; ') || '\u2014 no emails on file \u2014'],
+      ['PHONES  (paste into a group text)', group.map(x => dg(x.phone)).filter(d => d.length >= 10).join(', ') || '\u2014 no phone numbers on file \u2014'],
+    ].forEach(([label, value], i) => {
+      const lr = 4 + i*2
+      w.mergeCells(lr,1,lr,last)
+      const lc = w.getCell(lr,1); lc.value = label; lc.font = { ...f14b, size:11 }; lc.fill = hdrFill
+      w.mergeCells(lr+1,1,lr+1,last)
+      const vc = w.getCell(lr+1,1); vc.value = value; vc.font = { ...f14, size:10 }
+      vc.alignment = leftMid; vc.border = thinBorder
+      w.getRow(lr+1).height = 20
+    })
+    const HR = 9
+    cols.forEach((h,i) => { const c = w.getCell(HR,i+1); c.value=h; c.font=f14b; c.fill=hdrFill; c.border=thinBorder; c.alignment=ctr })
+    let r = HR + 1
+    group.forEach(pl => {
+      const days = TRYOUT_DAYS.filter(d => attended(checkins, pl.id, d)).length
+      const vals = [pl.pinnie_num, pl.first_name+' '+pl.last_name, ph(pl.phone), pl.email||'',
+                    pl.pos1+(pl.pos2?', '+pl.pos2:''), pl.year,
+                    isExempt(pl) ? '\u2014' : days,
+                    ...(withStatus ? [statusOf(pl)] : []),
+                    pl.paid ? 'PAID' : '']
+      vals.forEach((v,i) => {
+        const c = w.getCell(r,i+1); c.value=v; c.font=f14; c.border=thinBorder
+        c.alignment = (i===1||i===3) ? leftMid : ctr
+        if (withStatus && i===7 && String(v).startsWith('Cut')) c.font = { ...f14, color:{ argb:'FF922B21' } }
+        if (i===vals.length-1 && !v) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFDE2E2' } }
+      })
+      r++
+    })
+    w.autoFilter = { from:{ row:HR, column:1 }, to:{ row:Math.max(HR,r-1), column:last } }
+    w.views = [{ state:'frozen', ySplit:HR }]
+    ;[8,32,18,38,20,10,9,11,10].forEach((width,i) => { if (i < last) w.getColumn(i+1).width = width })
+  }
+
+  contactSheet('All Contacts', 'EVERYONE WHO TRIED OUT',
+    'Every player on the books \u2014 squad, practice squad and every round of cuts. Status says which.',
+    everyone, true)
+
+  // One tab per round that actually produced cuts.
+  TRYOUT_DAYS.forEach(d => {
+    const gone = everyone.filter(pl => pl.status === 'cut' && pl.cut_after_day === d)
+    contactSheet('Cut Day ' + d, 'CUT AFTER DAY ' + d,
+      'Players released after Day ' + d + '. Use the BCC line above for the follow-up note.',
+      gone, false)
+  })
+
   // ═══ SAVE ═══
   // Nobody is being graded on the squad day, so the two evaluation sheets go.
   if (isSquadDay) { wb.removeWorksheet(ws.id); wb.removeWorksheet(ws2.id) }
