@@ -978,6 +978,12 @@ async function exportRosterToExcel(players, scores, evaluators, currentDay, chec
     'Every player on the books \u2014 squad, practice squad and every round of cuts. Status says which.',
     everyone, true)
 
+  // Everyone who did not make it, all rounds in one place — the list you want
+  // when the message goes to the whole group rather than one night's cuts.
+  contactSheet('Not Selected', 'NOT ON THE SQUAD',
+    'Every player cut, across all rounds. Status says which night. Nobody on the final squad or the practice squad appears here.',
+    everyone.filter(pl => pl.status === 'cut'), true)
+
   // One tab per round that actually produced cuts.
   TRYOUT_DAYS.forEach(d => {
     const gone = everyone.filter(pl => pl.status === 'cut' && pl.cut_after_day === d)
